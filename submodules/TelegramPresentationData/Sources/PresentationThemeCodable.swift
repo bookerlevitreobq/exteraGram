@@ -2032,11 +2032,7 @@ extension PresentationThemeName: Codable {
     }
 }
 
-#if compiler(>=6.0)
-extension PresentationBuiltinThemeReference: @retroactive Codable {
-#else
 extension PresentationBuiltinThemeReference: Codable {
-#endif
     public init(from decoder: Decoder) throws {
         let values = try decoder.singleValueContainer()
         if let value = try? values.decode(String.self) {
