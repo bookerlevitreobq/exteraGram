@@ -1,0 +1,32 @@
+task:
+  name: build
+  alias: build
+
+  macos_instance:
+    image: ghcr.io/cirruslabs/macos-sequoia-xcode:latest
+
+  env:
+    SOURCE_DIR: /Users/Shared/telegram-ios
+    BUILD_NUMBER_OFFSET: 10000
+
+  script:
+    - sudo mkdir -p /Users/Shared
+    - sudo cp -R $CIRRUS_WORKING_DIR $SOURCE_DIR
+    - cd $SOURCE_DIR
+
+    - export APP_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["app"]);')
+    - export COMMIT_COUNT=$(git rev-list --count HEAD)
+    - export BUILD_NUMBER=$((COMMIT_COUNT + BUILD_NUMBER_OFFSET))
+
+    - python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+    - python3 -u build-system/Make/Make.py \
+        --overrideXcodeVersion \
+        build \
+        --configurationPath="build-system/appstore-configuration.json" \
+        --codesigningInformationPath=build-system/fake-codesigning \
+        --configuration=release_arm64 \
+        --buildNumber="$BUILD_NUMBER"
+
+  binaries_artifacts:
+    path: "bazel-bin/Telegram/*.ipa"
+    type: binary

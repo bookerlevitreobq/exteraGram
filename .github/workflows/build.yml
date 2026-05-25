@@ -1,0 +1,76 @@
+name: CI
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set active Xcode path
+        run: |
+          XCODE_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["xcode"]);')
+          if [ -d "/Applications/Xcode_$XCODE_VERSION.app/Contents/Developer" ]; then
+            sudo xcode-select -s "/Applications/Xcode_$XCODE_VERSION.app/Contents/Developer"
+          elif [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+            sudo xcode-select -s "/Applications/Xcode.app/Contents/Developer"
+          else
+            ls -la /Applications
+            exit 1
+          fi
+          xcodebuild -version
+
+      - name: Create canonical source directory
+        run: |
+          set -x
+          sudo mkdir -p /Users/Shared
+          cp -R $GITHUB_WORKSPACE /Users/Shared/
+          mv /Users/Shared/$(basename $GITHUB_WORKSPACE) /Users/Shared/telegram-ios
+
+      - name: Build the App
+        run: |
+          set -x
+          SOURCE_DIR=/Users/Shared/telegram-ios
+          BAZEL_USER_ROOT="/private/var/tmp/_bazel_containerhost"
+          cd $SOURCE_DIR
+          BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
+          export APP_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["app"]);')
+          export COMMIT_COUNT=$(git rev-list --count HEAD)
+          export COMMIT_COUNT="$(($COMMIT_COUNT+$BUILD_NUMBER_OFFSET))"
+          export BUILD_NUMBER="$COMMIT_COUNT"
+          echo "BUILD_NUMBER=$(echo $BUILD_NUMBER)" >> $GITHUB_ENV
+          echo "APP_VERSION=$(echo $APP_VERSION)" >> $GITHUB_ENV
+          python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+          python3 -u build-system/Make/Make.py \
+            --bazelUserRoot="$BAZEL_USER_ROOT" \
+            --overrideXcodeVersion \
+            build \
+            --configurationPath="build-system/appstore-configuration.json" \
+            --codesigningInformationPath=build-system/fake-codesigning \
+            --configuration=release_arm64 \
+            --buildNumber="$BUILD_NUMBER"
+          # collect ipa
+          OUTPUT_PATH="build/artifacts"
+          rm -rf "$OUTPUT_PATH"
+          mkdir -p "$OUTPUT_PATH"
+          cp bazel-bin/Telegram/*.ipa "$OUTPUT_PATH/Telegram.ipa"
+          # collect dsym
+          mkdir -p build/DSYMs
+          cp -R bazel-bin/Telegram/*.dSYM build/DSYMs/
+          zip -r "./$OUTPUT_PATH/Telegram.DSYMs.zip" build/DSYMs 1>/dev/null
+
+      - name: Create Release and Upload
+        run: |
+          gh release create "build-${{ env.BUILD_NUMBER }}" \
+            "/Users/Shared/telegram-ios/build/artifacts/Telegram.ipa" \
+            "/Users/Shared/telegram-ios/build/artifacts/Telegram.DSYMs.zip" \
+            --repo "${{ github.repository }}" \
+            --title "Telegram ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})" \
+            --notes "An unsigned build of Telegram for iOS ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

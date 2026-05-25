@@ -1,0 +1,1925 @@
+﻿diff --git a/Swiftgram/SGSettingsUI/Sources/SGSettingsController.swift b/Swiftgram/SGSettingsUI/Sources/SGSettingsController.swift
+index da487fa1c9..a819639887 100644
+--- a/Swiftgram/SGSettingsUI/Sources/SGSettingsController.swift
++++ b/Swiftgram/SGSettingsUI/Sources/SGSettingsController.swift
+@@ -41,6 +41,7 @@ private enum SGControllerSection: Int32, SGItemListSection {
+     case stickers
+     case videoNotes
+     case contextMenu
++    case focusMode
+     case accountColors
+     case other
+ }
+@@ -103,6 +104,7 @@ private enum SGBoolSetting: String {
+     case confirmCalls
+     case swipeForVideoPIP
+     case enableVoipTcp
++    case focusModeEnabled
+     case nyStyleSnow
+     case nyStyleLightning
+     case tabBarSearchEnabled
+@@ -114,6 +116,7 @@ private enum SGOneFromManySetting: String {
+     case downloadSpeedBoost
+     case allChatsTitleLengthOverride
+ //    case allChatsFolderPositionOverride
++    case focusModeTimeout
+     case translationBackend
+     case transcriptionBackend
+ }
+@@ -140,6 +143,18 @@ private struct SGSettingsControllerState: Equatable {
+ 
+ private typealias SGControllerEntry = SGItemListUIEntry<SGControllerSection, SGBoolSetting, SGSliderSetting, SGOneFromManySetting, SGDisclosureLink, AnyHashable>
+ 
++private func focusModeTimeoutDisplayString(_ seconds: Int) -> String {
++    if seconds < 60 {
++        return "\(seconds)s"
++    } else if seconds < 3600 {
++        let minutes = seconds / 60
++        return "\(minutes) min"
++    } else {
++        let hours = seconds / 3600
++        return "\(hours) hour"
++    }
++}
++
+ private func SGControllerEntries(presentationData: PresentationData, callListSettings: CallListSettings, experimentalUISettings: ExperimentalUISettings, appConfiguration: AppConfiguration, nameColors: PeerNameColors, state: SGSettingsControllerState) -> [SGControllerEntry] {
+     
+     let lang = presentationData.strings.baseLanguageCode
+@@ -150,8 +165,12 @@ private func SGControllerEntries(presentationData: PresentationData, callListSet
+     let id = SGItemListCounter()
+     
+     entries.append(.searchInput(id: id.count, section: .search, title: NSAttributedString(string: "馃攳"), text: state.searchQuery ?? "", placeholder: strings.Common_Search))
+-    
+-    
++
++    // MARK: Focus Mode
++    entries.append(.header(id: id.count, section: .focusMode, text: i18n("Settings.FocusMode.Header", lang), badge: nil))
++    entries.append(.toggle(id: id.count, section: .focusMode, settingName: .focusModeEnabled, value: SGSimpleSettings.shared.focusModeEnabled, text: i18n("Settings.FocusMode", lang), enabled: true))
++    entries.append(.oneFromManySelector(id: id.count, section: .focusMode, settingName: .focusModeTimeout, text: i18n("Settings.FocusMode.Timeout", lang), value: focusModeTimeoutDisplayString(SGSimpleSettings.shared.focusModeTimeout), enabled: SGSimpleSettings.shared.focusModeEnabled))
++
+     if SGSimpleSettings.shared.canUseNY {
+         entries.append(.header(id: id.count, section: .trending, text: i18n("Settings.NY.Header", lang), badge: newStr))
+         entries.append(.toggle(id: id.count, section: .trending, settingName: .nyStyleSnow, value: SGSimpleSettings.shared.nyStyle == SGSimpleSettings.NYStyle.snow.rawValue, text: i18n("Settings.NY.Style.snow", lang), enabled: true))
+@@ -515,6 +534,9 @@ public func sgSettingsController(context: AccountContext/*, focusOnItemTag: Int?
+                     }
+                 )
+             ).start()
++        case .focusModeEnabled:
++            SGSimpleSettings.shared.focusModeEnabled = value
++            simplePromise.set(true)
+         case .nyStyleSnow:
+             SGSimpleSettings.shared.nyStyle = value ? SGSimpleSettings.NYStyle.snow.rawValue : SGSimpleSettings.NYStyle.default.rawValue
+             simplePromise.set(true) // Trigger update for 'enabled' field of other toggles
+@@ -547,6 +569,25 @@ public func sgSettingsController(context: AccountContext/*, focusOnItemTag: Int?
+         var items: [ActionSheetItem] = []
+         
+         switch (setting) {
++            case .focusModeTimeout:
++                let setAction: (Int) -> Void = { value in
++                    SGSimpleSettings.shared.focusModeTimeout = value
++                    simplePromise.set(true)
++                }
++
++                let timeoutOptions: [(String, Int)] = [
++                    ("1 min", 60),
++                    ("5 min", 300),
++                    ("15 min", 900),
++                    ("30 min", 1800),
++                    ("1 hour", 3600),
++                ]
++                for (title, seconds) in timeoutOptions {
++                    items.append(ActionSheetButtonItem(title: title, color: .accent, action: { [weak actionSheet] in
++                        actionSheet?.dismissAnimated()
++                        setAction(seconds)
++                    }))
++                }
+             case .downloadSpeedBoost:
+                 let setAction: (String) -> Void = { value in
+                     SGSimpleSettings.shared.downloadSpeedBoost = value
+diff --git a/Swiftgram/SGSimpleSettings/Sources/SimpleSettings.swift b/Swiftgram/SGSimpleSettings/Sources/SimpleSettings.swift
+index 2db47deb51..d1ebf817c0 100644
+--- a/Swiftgram/SGSimpleSettings/Sources/SimpleSettings.swift
++++ b/Swiftgram/SGSimpleSettings/Sources/SimpleSettings.swift
+@@ -176,6 +176,8 @@ public class SGSimpleSettings {
+         case warnOnStoriesOpen
+         case showProfileId
+         case sendWithReturnKey
++        case focusModeEnabled
++        case focusModeTimeout
+     }
+     
+     public enum DownloadSpeedBoostValues: String, CaseIterable {
+@@ -328,7 +330,9 @@ public class SGSimpleSettings {
+         Keys.hideStories.rawValue: false,
+         Keys.warnOnStoriesOpen.rawValue: false,
+         Keys.showProfileId.rawValue: true,
+-        Keys.sendWithReturnKey.rawValue: false
++        Keys.sendWithReturnKey.rawValue: false,
++        Keys.focusModeEnabled.rawValue: true,
++        Keys.focusModeTimeout.rawValue: 300,
+     ]
+     
+     public static let groupDefaultValues: [String: Any] = [
+@@ -592,6 +596,12 @@ public class SGSimpleSettings {
+     
+     @UserDefault(key: Keys.tabBarSearchEnabled.rawValue)
+     public var tabBarSearchEnabled: Bool
++
++    @UserDefault(key: Keys.focusModeEnabled.rawValue)
++    public var focusModeEnabled: Bool
++
++    @UserDefault(key: Keys.focusModeTimeout.rawValue)
++    public var focusModeTimeout: Int
+ }
+ 
+ extension SGSimpleSettings {
+diff --git a/submodules/AccountContext/Sources/AccountContext.swift b/submodules/AccountContext/Sources/AccountContext.swift
+index 4dd912c21e..3fcf22ca10 100644
+--- a/submodules/AccountContext/Sources/AccountContext.swift
++++ b/submodules/AccountContext/Sources/AccountContext.swift
+@@ -176,7 +176,7 @@ public struct ChatAvailableMessageActions {
+         self.banAuthor = banAuthor
+         self.banAuthors = banAuthors
+         self.disableDelete = disableDelete
+-        self.isCopyProtected = isCopyProtected
++        self.isCopyProtected = false
+         self.setTag = setTag
+         self.editTags = editTags
+     }
+diff --git a/submodules/AccountContext/Sources/PeerSelectionController.swift b/submodules/AccountContext/Sources/PeerSelectionController.swift
+index 175e7c3a59..751eae65ce 100644
+--- a/submodules/AccountContext/Sources/PeerSelectionController.swift
++++ b/submodules/AccountContext/Sources/PeerSelectionController.swift
+@@ -35,7 +35,8 @@ public struct ChatListNodePeersFilter: OptionSet {
+     public static let excludeGroups = ChatListNodePeersFilter(rawValue: 1 << 14)
+     public static let excludeUsers = ChatListNodePeersFilter(rawValue: 1 << 15)
+     public static let excludeBots = ChatListNodePeersFilter(rawValue: 1 << 16)
+-    
++    public static let excludeTopPeers = ChatListNodePeersFilter(rawValue: 1 << 17)
++
+     public static let includeSelf = ChatListNodePeersFilter(rawValue: 1 << 7)
+ }
+ 
+diff --git a/submodules/ChatListUI/Sources/ChatListSearchListPaneNode.swift b/submodules/ChatListUI/Sources/ChatListSearchListPaneNode.swift
+index f855e76dfd..0b2c2155fc 100644
+--- a/submodules/ChatListUI/Sources/ChatListSearchListPaneNode.swift
++++ b/submodules/ChatListUI/Sources/ChatListSearchListPaneNode.swift
+@@ -4022,7 +4022,7 @@ final class ChatListSearchListPaneNode: ASDisplayNode, ChatListSearchPaneNode {
+             }
+             
+             var entries: [ChatListRecentEntry] = []
+-            if !peersFilter.contains(.onlyGroups) {
++            if !peersFilter.contains(.onlyGroups) && !peersFilter.contains(.excludeTopPeers) {
+                 if hasRecentPeers {
+                     entries.append(.topPeers([], presentationData.theme, presentationData.strings))
+                 }
+diff --git a/submodules/ChatListUI/Sources/FocusTabController.swift b/submodules/ChatListUI/Sources/FocusTabController.swift
+new file mode 100644
+index 0000000000..e10e669887
+--- /dev/null
++++ b/submodules/ChatListUI/Sources/FocusTabController.swift
+@@ -0,0 +1,290 @@
++import Foundation
++import UIKit
++import Display
++import AsyncDisplayKit
++import SwiftSignalKit
++import TelegramCore
++import TelegramPresentationData
++import AccountContext
++import SearchBarNode
++import SearchUI
++import AnimationCache
++import MultiAnimationRenderer
++import AppBundle
++
++private let searchBarFont = Font.regular(17.0)
++
++public final class FocusTabController: ViewController {
++    private let context: AccountContext
++
++    private var searchBarNode: SearchBarNode?
++    private var searchContainerNode: ChatListSearchContainerNode?
++
++    private var presentationData: PresentationData
++    private var presentationDataDisposable: Disposable?
++
++    private var validLayout: ContainerViewLayout?
++    private var hasAppeared = false
++
++    private let openMessageFromSearchDisposable = MetaDisposable()
++
++    public init(context: AccountContext) {
++        self.context = context
++        self.presentationData = context.sharedContext.currentPresentationData.with { $0 }
++
++        super.init(navigationBarPresentationData: nil)
++
++        self.tabBarItem.title = "Focus"
++        let icon = UIImage(bundleImageName: "Chat List/Tabs/IconFocus")
++        self.tabBarItem.image = icon
++        self.tabBarItem.selectedImage = icon
++
++        self.presentationDataDisposable = (context.sharedContext.presentationData
++        |> deliverOnMainQueue).startStrict(next: { [weak self] presentationData in
++            guard let self else { return }
++            self.presentationData = presentationData
++        })
++    }
++
++    required init(coder aDecoder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    deinit {
++        self.presentationDataDisposable?.dispose()
++        self.openMessageFromSearchDisposable.dispose()
++    }
++
++    override public func loadDisplayNode() {
++        self.displayNode = ASDisplayNode()
++        self.displayNode.backgroundColor = self.presentationData.theme.chatList.backgroundColor
++
++        self.setupSearchBar()
++        self.setupSearchContainer()
++    }
++
++    override public func viewDidAppear(_ animated: Bool) {
++        super.viewDidAppear(animated)
++
++        if !self.hasAppeared {
++            self.hasAppeared = true
++            self.searchBarNode?.activate()
++        }
++    }
++
++    private func setupSearchBar() {
++        let theme = SearchBarNodeTheme(theme: self.presentationData.theme)
++        let searchBarNode = SearchBarNode(
++            theme: theme,
++            presentationTheme: self.presentationData.theme,
++            strings: self.presentationData.strings,
++            fieldStyle: .modern,
++            forceSeparator: true,
++            displayBackground: true
++        )
++        searchBarNode.hasCancelButton = false
++        searchBarNode.placeholderString = NSAttributedString(
++            string: self.presentationData.strings.Common_Search,
++            font: searchBarFont,
++            textColor: self.presentationData.theme.rootController.navigationSearchBar.inputPlaceholderTextColor
++        )
++
++        searchBarNode.textUpdated = { [weak self] text, _ in
++            self?.searchContainerNode?.searchTextUpdated(text: text)
++        }
++        searchBarNode.textReturned = { [weak self] text in
++            self?.searchContainerNode?.searchTextUpdated(text: text)
++        }
++
++        self.searchBarNode = searchBarNode
++        self.displayNode.addSubnode(searchBarNode)
++    }
++
++    private func setupSearchContainer() {
++        let animationCache = self.context.animationCache
++        let animationRenderer = self.context.animationRenderer
++
++        let filter: ChatListNodePeersFilter = [.excludeTopPeers]
++
++        let contentNode = ChatListSearchContainerNode(
++            context: self.context,
++            animationCache: animationCache,
++            animationRenderer: animationRenderer,
++            filter: filter,
++            requestPeerType: nil,
++            location: .chatList(groupId: .root),
++            folder: nil,
++            displaySearchFilters: false,
++            hasDownloads: false,
++            initialFilter: .chats,
++            openPeer: { [weak self] peer, _, threadId, dismissSearch in
++                self?.openPeer(peer: peer, threadId: threadId)
++            },
++            openDisabledPeer: { _, _, _ in },
++            openRecentPeerOptions: { [weak self] peer in
++                self?.openRecentPeerOptions(peer: peer)
++            },
++            openMessage: { [weak self] peer, threadId, messageId, deactivateOnAction in
++                self?.openMessage(peer: peer, threadId: threadId, messageId: messageId)
++            },
++            addContact: { [weak self] phoneNumber in
++                self?.addContact(phoneNumber: phoneNumber)
++            },
++            peerContextAction: nil,
++            present: { [weak self] c, a in
++                self?.present(c, in: .window(.root), with: a)
++            },
++            presentInGlobalOverlay: { [weak self] c, a in
++                self?.presentInGlobalOverlay(c, with: a)
++            },
++            navigationController: self.navigationController as? NavigationController,
++            parentController: { [weak self] in
++                return self
++            }
++        )
++
++        contentNode.dismissSearch = { [weak self] in
++            self?.searchBarNode?.text = ""
++        }
++        contentNode.backgroundColor = self.presentationData.theme.chatList.backgroundColor
++
++        self.searchContainerNode = contentNode
++        self.displayNode.addSubnode(contentNode)
++
++        // Trigger initial "recent" state
++        contentNode.searchTextUpdated(text: "")
++    }
++
++    // MARK: - Search Result Actions
++
++    private func openPeer(peer: EnginePeer, threadId: Int64?) {
++        let storedPeer = self.context.engine.peers.ensurePeerIsLocallyAvailable(peer: peer)
++        |> map { _ -> Void in return Void() }
++        self.openMessageFromSearchDisposable.set((storedPeer |> deliverOnMainQueue).startStrict(completed: { [weak self] in
++            guard let self, let navigationController = self.navigationController as? NavigationController else { return }
++            if case let .channel(channel) = peer, channel.isForumOrMonoForum, let threadId {
++                let _ = self.context.sharedContext.navigateToForumThread(
++                    context: self.context,
++                    peerId: peer.id,
++                    threadId: threadId,
++                    messageId: nil,
++                    navigationController: navigationController,
++                    activateInput: nil,
++                    scrollToEndIfExists: false,
++                    keepStack: .never,
++                    animated: true
++                ).startStandalone()
++            } else {
++                self.context.sharedContext.navigateToChatController(NavigateToChatControllerParams(
++                    navigationController: navigationController,
++                    context: self.context,
++                    chatLocation: .peer(peer)
++                ))
++            }
++        }))
++    }
++
++    private func openMessage(peer: EnginePeer, threadId: Int64?, messageId: EngineMessage.Id) {
++        guard let navigationController = self.navigationController as? NavigationController else { return }
++        self.context.sharedContext.navigateToChatController(NavigateToChatControllerParams(
++            navigationController: navigationController,
++            context: self.context,
++            chatLocation: .peer(peer),
++            subject: .message(id: .id(messageId), highlight: ChatControllerSubject.MessageHighlight(quote: nil), timecode: nil, setupReply: false)
++        ))
++    }
++
++    private func openRecentPeerOptions(peer: EnginePeer) {
++        self.view.window?.endEditing(true)
++        let actionSheet = ActionSheetController(presentationData: self.presentationData)
++        actionSheet.setItemGroups([
++            ActionSheetItemGroup(items: [
++                ActionSheetButtonItem(title: self.presentationData.strings.Common_Delete, color: .destructive, action: { [weak actionSheet, weak self] in
++                    actionSheet?.dismissAnimated()
++                    if let self {
++                        let _ = self.context.engine.peers.removeRecentPeer(peerId: peer.id).startStandalone()
++                    }
++                })
++            ]),
++            ActionSheetItemGroup(items: [
++                ActionSheetButtonItem(title: self.presentationData.strings.Common_Cancel, color: .accent, font: .bold, action: { [weak actionSheet] in
++                    actionSheet?.dismissAnimated()
++                })
++            ])
++        ])
++        self.present(actionSheet, in: .window(.root))
++    }
++
++    private func addContact(phoneNumber: String) {
++        self.view.endEditing(true)
++        self.context.sharedContext.openAddContact(
++            context: self.context,
++            peer: nil,
++            firstName: "",
++            lastName: "",
++            phoneNumber: phoneNumber,
++            label: defaultContactLabel,
++            present: { [weak self] controller, arguments in
++                self?.present(controller, in: .window(.root), with: arguments)
++            },
++            pushController: { [weak self] controller in
++                (self?.navigationController as? NavigationController)?.pushViewController(controller)
++            },
++            completed: { }
++        )
++    }
++
++    // MARK: - Layout
++
++    override public func containerLayoutUpdated(_ layout: ContainerViewLayout, transition: ContainedViewLayoutTransition) {
++        super.containerLayoutUpdated(layout, transition: transition)
++        self.validLayout = layout
++
++        let topInset = (layout.statusBarHeight ?? 0.0) + 10.0
++        let searchBarHeight: CGFloat = 56.0
++
++        if let searchBarNode = self.searchBarNode {
++            let searchBarFrame = CGRect(
++                origin: CGPoint(x: 0.0, y: topInset),
++                size: CGSize(width: layout.size.width, height: searchBarHeight)
++            )
++            transition.updateFrame(node: searchBarNode, frame: searchBarFrame)
++            searchBarNode.updateLayout(
++                boundingSize: searchBarFrame.size,
++                leftInset: layout.safeInsets.left,
++                rightInset: layout.safeInsets.right,
++                transition: transition
++            )
++        }
++
++        let contentTop = topInset + searchBarHeight
++        let contentFrame = CGRect(
++            origin: CGPoint(x: 0.0, y: contentTop),
++            size: CGSize(
++                width: layout.size.width,
++                height: layout.size.height - contentTop
++            )
++        )
++
++        if let searchContainerNode = self.searchContainerNode {
++            transition.updateFrame(node: searchContainerNode, frame: contentFrame)
++            searchContainerNode.containerLayoutUpdated(ContainerViewLayout(
++                size: contentFrame.size,
++                metrics: layout.metrics,
++                deviceMetrics: layout.deviceMetrics,
++                intrinsicInsets: UIEdgeInsets(
++                    top: 0.0,
++                    left: layout.safeInsets.left,
++                    bottom: layout.intrinsicInsets.bottom,
++                    right: layout.safeInsets.right
++                ),
++                safeInsets: layout.safeInsets,
++                additionalInsets: layout.additionalInsets,
++                statusBarHeight: nil,
++                inputHeight: layout.inputHeight,
++                inputHeightIsInteractivellyChanging: layout.inputHeightIsInteractivellyChanging,
++                inVoiceOver: layout.inVoiceOver
++            ), navigationBarHeight: 0.0, transition: transition)
++        }
++    }
++}
+diff --git a/submodules/MediaPlayer/Sources/MediaPlayerNode.swift b/submodules/MediaPlayer/Sources/MediaPlayerNode.swift
+index c8b563b5b8..532033963e 100644
+--- a/submodules/MediaPlayer/Sources/MediaPlayerNode.swift
++++ b/submodules/MediaPlayer/Sources/MediaPlayerNode.swift
+@@ -354,9 +354,14 @@ public final class MediaPlayerNode: ASDisplayNode {
+             Queue.mainQueue().async {
+                 if let strongSelf = self {
+                     strongSelf.videoLayer = videoLayer
++                    
++                    // ================== [馃殌 Swiftgram-Pro: 褰诲簳鎽ф瘉瑙嗛闃叉埅灞?闃插綍灞廬 ==================
++                    // 鏃犺鏈嶅姟绔殑 captureProtected 鎸囦护锛屽己鍒惰В闄?AVPlayerLayer 鐨勬崟鑾烽檺鍒讹紒
+                     if #available(iOS 13.0, *) {
+-                        videoLayer.preventsCapture = captureProtected
++                        videoLayer.preventsCapture = false 
+                     }
++                    // =========================================================================
++                    
+                     strongSelf.updateLayout()
+                     
+                     strongSelf.layer.addSublayer(videoLayer)
+diff --git a/submodules/TelegramApi/Sources/Api28.swift b/submodules/TelegramApi/Sources/Api28.swift
+index e3507ba121..80bfa7e51d 100644
+--- a/submodules/TelegramApi/Sources/Api28.swift
++++ b/submodules/TelegramApi/Sources/Api28.swift
+@@ -3051,10 +3051,19 @@ public extension Api {
+                 }
+                 if Int(_data.flags) & Int(1 << 0) != 0 {
+                     buffer.appendInt32(481674261)
+-                    buffer.appendInt32(Int32(_data.order!.count))
+-                    for item in _data.order! {
++
++                    // ================== [馃殌 Swiftgram-Pro: 鐗╃悊灞備簯绔楠梋 ==================
++                    // 鏋佸琛ヤ竵锛氬湪杩欓噷寮鸿鎴柇锛佹棤璁烘湰鍦伴拤浜嗗灏戜釜锛屽彂缁欐湇鍔″櫒鐨勬案杩滃彧鍙栧墠 5 涓€?+                    // 杩欐牱鏈嶅姟鍣ㄦ敹鍒扮殑璇锋眰灏辨槸鍚堟硶鐨勶紝涓嶄細杩斿洖 PINNED_DIALOGS_TOO_MUCH銆?+                    let serverLimit: Int = 5 // 濡傛灉浣犵殑璐﹀彿鏄?Premium锛屽彲浠ユ牴鎹渶瑕佹敼涓?10
++                    let originalOrder = _data.order ?? []
++                    let truncatedOrder = originalOrder.count > serverLimit ? Array(originalOrder.prefix(serverLimit)) : originalOrder
++
++                    buffer.appendInt32(Int32(truncatedOrder.count))
++                    for item in truncatedOrder {
+                         item.serialize(buffer, true)
+                     }
++                    // =========================================================================
+                 }
+                 break
+             case .updatePinnedForumTopic(let _data):
+diff --git a/submodules/TelegramCore/Sources/Network/MultipartUpload.swift b/submodules/TelegramCore/Sources/Network/MultipartUpload.swift
+index 5d0a83cc94..d3d5d89e8c 100644
+--- a/submodules/TelegramCore/Sources/Network/MultipartUpload.swift
++++ b/submodules/TelegramCore/Sources/Network/MultipartUpload.swift
+@@ -9,7 +9,6 @@ import ManagedFile
+ 
+ private typealias SignalKitTimer = SwiftSignalKit.Timer
+ 
+-
+ private struct UploadPart {
+     let fileId: Int64
+     let index: Int
+@@ -29,7 +28,7 @@ private final class MultipartUploadState {
+     let aesKey: Data
+     var aesIv: Data
+     var effectiveSize: Int64 = 0
+-    
++
+     init(encryptionKey: SecretFileEncryptionKey?) {
+         if let encryptionKey = encryptionKey {
+             self.aesKey = encryptionKey.aesKey
+@@ -39,13 +38,13 @@ private final class MultipartUploadState {
+             self.aesIv = Data()
+         }
+     }
+-    
++
+     func transformHeader(data: Data) -> Data {
+         assert(self.aesKey.isEmpty)
+         self.effectiveSize += Int64(data.count)
+         return data
+     }
+-    
++
+     func transform(data: Data) -> Data {
+         if self.aesKey.count != 0 {
+             var encryptedData = data
+@@ -74,7 +73,7 @@ private final class MultipartUploadState {
+             return data
+         }
+     }
+-    
++
+     func finalize() -> Int64 {
+         return self.effectiveSize
+     }
+@@ -91,7 +90,7 @@ private struct MultipartIntermediateResult {
+ private enum MultipartUploadData {
+     case resourceData(MediaResourceData)
+     case data(Data)
+-    
++
+     var size: Int64 {
+         switch self {
+         case let .resourceData(data):
+@@ -123,56 +122,56 @@ private final class MultipartUploadManager {
+     var bigParts: Bool
+     private let forceNoBigParts: Bool
+     private let useLargerParts: Bool
+-    
++
+     let queue = Queue()
+     let fileId: Int64
+-    
++
+     let dataSignal: Signal<MultipartUploadData, NoError>
+-    
++
+     var committedOffset: Int64
+     let uploadPart: (UploadPart) -> Signal<Void, UploadPartError>
+     let progress: (Float) -> Void
+     let completed: (MultipartIntermediateResult?) -> Void
+-    
++
+     var uploadingParts: [Int64: (Int64, Disposable)] = [:]
+     var uploadedParts: [Int64: Int64] = [:]
+-    
++
+     let dataDisposable = MetaDisposable()
+     var resourceData: MultipartUploadData?
+-    
++
+     var headerPartState: HeaderPartState
+-    
++
+     let state: MultipartUploadState
+-    
++
+     init(headerSize: Int32, data: Signal<MultipartUploadData, NoError>, encryptionKey: SecretFileEncryptionKey?, hintFileSize: Int64?, hintFileIsLarge: Bool, forceNoBigParts: Bool, useLargerParts: Bool, increaseParallelParts: Bool, uploadPart: @escaping (UploadPart) -> Signal<Void, UploadPartError>, progress: @escaping (Float) -> Void, completed: @escaping (MultipartIntermediateResult?) -> Void) {
+         self.dataSignal = data
+-        
++
+         var fileId: Int64 = 0
+         arc4random_buf(&fileId, 8)
+         self.fileId = fileId
+-        
+-        if increaseParallelParts {
+-            self.parallelParts = 30
+-        } else {
+-            self.parallelParts = 3
+-        }
+-        
++
++        // ================== [馃殌 Swiftgram-Pro: 寮哄埗瀹夊叏楂樺苟鍙?(8鏉￠€氶亾璺戞弧)] ==================
++        // 褰诲簳鎶涘純鍘熸湁鐨勫姩鎬佸垽鏂紝鐩存帴灏嗗苟鍙戦攣姝诲湪 8 绾跨▼銆?+        // 淇濈暀涓嬫柟鍘熺増瀹夊叏鐨勫垎鍧?PartSize)閫昏緫锛屽畬缇庨伩寮€鍙戦€佽棰戝嚭鐜版劅鍙瑰彿鐨?Bug锛?+        self.parallelParts = 8
++        // =================================================================================
++
+         self.forceNoBigParts = forceNoBigParts
+         self.useLargerParts = useLargerParts
+-        
++
+         self.state = MultipartUploadState(encryptionKey: encryptionKey)
+-        
++
+         self.committedOffset = 0
+         self.uploadPart = uploadPart
+         self.progress = progress
+         self.completed = completed
+-        
++
+         if headerSize == 0 {
+             self.headerPartState = .ready
+         } else {
+             self.headerPartState = .notStarted
+         }
+-        
++
+         if let hintFileSize = hintFileSize, hintFileSize > 10 * 1024 * 1024, !forceNoBigParts {
+             self.defaultPartSize = 512 * 1024
+             self.bigTotalParts = Int((hintFileSize / self.defaultPartSize) + (hintFileSize % self.defaultPartSize == 0 ? 0 : 1))
+@@ -182,8 +181,10 @@ private final class MultipartUploadManager {
+             self.bigTotalParts = nil
+             self.bigParts = true
+         } else if useLargerParts {
+-            self.bigParts = false
+-            self.defaultPartSize = 256 * 1024
++            // ================== [馃殌 Swiftgram-Pro: 4GB+ 鍏煎鎬у寮?& 鎻愰€焆 ==================
++            self.bigParts = true
++            self.defaultPartSize = 1024 * 1024 // 鍗曞潡澶у皬鎻愬崌鑷?1MB
++            // ===============================================================================
+             self.bigTotalParts = nil
+         } else {
+             self.bigParts = false
+@@ -191,11 +192,11 @@ private final class MultipartUploadManager {
+             self.bigTotalParts = nil
+         }
+     }
+-    
++
+     deinit {
+         let uploadingParts = self.uploadingParts
+         let dataDisposable = self.dataDisposable
+-        
++
+         self.queue.async {
+             for (_, (_, disposable)) in uploadingParts {
+                 disposable.dispose()
+@@ -203,7 +204,7 @@ private final class MultipartUploadManager {
+             dataDisposable.dispose()
+         }
+     }
+-    
++
+     func start() {
+         self.queue.async {
+             self.dataDisposable.set((self.dataSignal
+@@ -215,7 +216,7 @@ private final class MultipartUploadManager {
+             }))
+         }
+     }
+-    
++
+     func cancel() {
+         self.queue.async {
+             for (_, (_, disposable)) in self.uploadingParts {
+@@ -223,7 +224,7 @@ private final class MultipartUploadManager {
+             }
+         }
+     }
+-    
++
+     func checkState() {
+         if let resourceData = self.resourceData, resourceData.complete && resourceData.size != 0 {
+             if self.committedOffset == 0 && self.uploadedParts.isEmpty && self.uploadingParts.isEmpty {
+@@ -232,17 +233,20 @@ private final class MultipartUploadManager {
+                     self.bigTotalParts = Int(resourceData.size / self.defaultPartSize) + (resourceData.size % self.defaultPartSize == 0 ? 0 : 1)
+                     self.bigParts = true
+                 } else {
+-                    self.bigParts = false
++                    // ================== [馃殌 Swiftgram-Pro: 鑷姩閲嶆牎鍑嗗ぇ鏂囦欢妯″紡] ==================
+                     if self.useLargerParts {
+-                        self.defaultPartSize = 256 * 1024
++                        self.bigParts = true
++                        self.defaultPartSize = 1024 * 1024 // 鍚屾鎻愰€熻嚦 1MB
+                     } else {
++                        self.bigParts = false
+                         self.defaultPartSize = 16 * 1024
+                     }
++                    // =========================================================================
+                     self.bigTotalParts = nil
+                 }
+             }
+         }
+-        
++
+         var updatedCommittedOffset = false
+         for offset in self.uploadedParts.keys.sorted() {
+             if offset == self.committedOffset {
+@@ -257,7 +261,7 @@ private final class MultipartUploadManager {
+                 self.progress(Float(self.committedOffset) / Float(resourceData.size))
+             }
+         }
+-        
++
+         if let resourceData = self.resourceData, resourceData.complete, self.committedOffset >= resourceData.size {
+             switch self.headerPartState {
+                 case .ready:
+@@ -289,7 +293,7 @@ private final class MultipartUploadManager {
+                         self.headerPartState = .uploading
+                         let part = self.uploadPart(UploadPart(fileId: self.fileId, index: partIndex, data: partData, bigTotalParts: currentBigTotalParts, bigPart: self.bigParts))
+                         |> deliverOn(self.queue)
+-                        self.uploadingParts[0] = (partSize, part.startStrict(error: { [weak self] _ in
++                        self.uploadingParts[0] = (partSize, part.startStrict(error: { [weak self] (_: UploadPartError) in
+                             self?.completed(nil)
+                         }, completed: { [weak self] in
+                             if let strongSelf = self {
+@@ -312,7 +316,7 @@ private final class MultipartUploadManager {
+                     case .ready, .uploading:
+                         break
+                 }
+-                
++
+                 var nextOffset = self.committedOffset
+                 for (offset, (size, _)) in self.uploadingParts {
+                     nextOffset = max(nextOffset, offset + size)
+@@ -320,10 +324,10 @@ private final class MultipartUploadManager {
+                 for (offset, partSize) in self.uploadedParts {
+                     nextOffset = max(nextOffset, offset + partSize)
+                 }
+-                
++
+                 let partOffset = nextOffset
+                 let partSize = min(resourceData.size - partOffset, self.defaultPartSize)
+-                
++
+                 if nextOffset < resourceData.size && partSize > 0 && (resourceData.complete || partSize == self.defaultPartSize) {
+                     let partIndex = Int(partOffset / self.defaultPartSize)
+                     let partData: Data?
+@@ -363,7 +367,7 @@ private final class MultipartUploadManager {
+                                     break
+                             }
+                         }
+-                        self.uploadingParts[nextOffset] = (partSize, part.startStrict(error: { [weak self] _ in
++                        self.uploadingParts[nextOffset] = (partSize, part.startStrict(error: { [weak self] (_: UploadPartError) in
+                             self?.completed(nil)
+                         }, completed: { [weak self] in
+                             if let strongSelf = self {
+@@ -408,7 +412,7 @@ func multipartUpload(network: Network, postbox: Postbox, source: MultipartUpload
+         case download(Download)
+         case multiplexed(manager: MultiplexedRequestManager, datacenterId: Int, consumerId: Int64)
+     }
+-    
++
+     let uploadInterface: Signal<UploadInterface, NoError>
+     if useMultiplexedRequests {
+         uploadInterface = .single(.multiplexed(manager: network.multiplexedRequestManager, datacenterId: network.datacenterId, consumerId: Int64.random(in: Int64.min ... Int64.max)))
+@@ -418,7 +422,7 @@ func multipartUpload(network: Network, postbox: Postbox, source: MultipartUpload
+             return .download(download)
+         }
+     }
+-    
++
+     return uploadInterface
+     |> mapToSignalPromotingError { uploadInterface -> Signal<MultipartUploadResult, MultipartUploadError> in
+         return Signal { subscriber in
+@@ -438,7 +442,7 @@ func multipartUpload(network: Network, postbox: Postbox, source: MultipartUpload
+                 }
+                 encryptionKey = SecretFileEncryptionKey(aesKey: aesKey, aesIv: aesIv)
+             }
+-            
++
+             let dataSignal: Signal<MultipartUploadData, NoError>
+             let headerSize: Int32
+             let fetchedResource: Signal<Void, FetchResourceError>
+@@ -470,7 +474,7 @@ func multipartUpload(network: Network, postbox: Postbox, source: MultipartUpload
+                     }
+                     fetchedResource = .complete()
+             }
+-            
++
+             let onFloodWaitError: (String) -> Void = { [weak network] error in
+                 guard let network else {
+                     return
+@@ -479,8 +483,7 @@ func multipartUpload(network: Network, postbox: Postbox, source: MultipartUpload
+                     network.addNetworkSpeedLimitedEvent(event: .upload)
+                 }
+             }
+-            
+-            // TODO(swiftgram): Change other variables for uploadSpeedBoost
++
+             let manager = MultipartUploadManager(headerSize: headerSize, data: dataSignal, encryptionKey: encryptionKey, hintFileSize: hintFileSize, hintFileIsLarge: hintFileIsLarge, forceNoBigParts: forceNoBigParts, useLargerParts: useLargerParts || SGSimpleSettings.shared.uploadSpeedBoost, increaseParallelParts: increaseParallelParts || SGSimpleSettings.shared.uploadSpeedBoost, uploadPart: { part in
+                 switch uploadInterface {
+                 case let .download(download):
+@@ -497,7 +500,7 @@ func multipartUpload(network: Network, postbox: Postbox, source: MultipartUpload
+                         var fingerprint: Int32 = 0
+                         keyDigest.withUnsafeBytes { rawBytes -> Void in
+                             let bytes = rawBytes.baseAddress!.assumingMemoryBound(to: UInt8.self)
+-                            
++
+                             withUnsafeMutableBytes(of: &fingerprint, { ptr -> Void in
+                                 let uintPtr = ptr.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                                 uintPtr[0] = bytes[0] ^ bytes[4]
+@@ -529,11 +532,11 @@ func multipartUpload(network: Network, postbox: Postbox, source: MultipartUpload
+             })
+ 
+             manager.start()
+-            
++
+             let fetchedResourceDisposable = fetchedResource.start(error: { _ in
+                 subscriber.putError(.generic)
+             })
+-            
++
+             return ActionDisposable {
+                 manager.cancel()
+                 fetchedResourceDisposable.dispose()
+diff --git a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
+index 555b9d62cb..674b17de39 100644
+--- a/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
++++ b/submodules/TelegramCore/Sources/State/AccountStateManagementUtils.swift
+@@ -4410,30 +4410,70 @@ func replayFinalState(
+                     }
+                 }
+             case let .DeleteMessagesWithGlobalIds(ids):
+-                var resourceIds: [MediaResourceId] = []
+-                transaction.deleteMessagesWithGlobalIds(ids, forEachMedia: { media in
+-                    addMessageMediaResourceIdsToRemove(media: media, resourceIds: &resourceIds)
+-                })
+-                if !resourceIds.isEmpty {
+-                    let _ = mediaBox.removeCachedResources(Array(Set(resourceIds)), force: true).start()
++                var actuallyDeleteGlobalIds: [Int32] = []
++                let localIds = transaction.messageIdsForGlobalIds(ids)
++                
++                for i in 0..<ids.count {
++                    let globalId = ids[i]
++                    var intercepted = false
++                    
++                    if i < localIds.count {
++                        let localId = localIds[i]
++                        if let message = transaction.getMessage(localId) {
++                            let revokedText = message.flags.contains(.Incoming) ? " [馃毇 瀵规柟鎾ゅ洖]" : " [馃毇 鍙屽悜鍒犻櫎]"
++                            transaction.updateMessage(localId, update: { currentMessage in
++                                if currentMessage.text.contains("[馃毇") { return .skip }
++                                let storeForwardInfo = currentMessage.forwardInfo.flatMap(StoreMessageForwardInfo.init)
++                                return .update(StoreMessage(id: currentMessage.id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: StoreMessageFlags(currentMessage.flags), tags: currentMessage.tags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text + revokedText, attributes: currentMessage.attributes, media: currentMessage.media))
++                            })
++                            intercepted = true
++                        }
++                    }
++                    
++                    if !intercepted {
++                        actuallyDeleteGlobalIds.append(globalId)
++                    }
+                 }
+-                deletedMessageIds.append(contentsOf: ids.map { .global($0) })
++                
++                /* ================= 杩涢樁鍥涳細鐗╃悊鏂囦欢閿佸畾 =================
++                   鎴戜滑鎶婅繖閲岀殑 mediaBox.removeCachedResources 褰诲簳闃夊壊浜嗐€?+                   鍚屾椂浼犲叆绌虹殑 forEachMedia 闂寘銆?+                   杩欐剰鍛崇潃鍝€曟槸绯荤粺寮哄埗娓呯悊锛屾垨鑰呬綘鑷繁鍒犻櫎浜嗚繖鏉℃秷鎭紝
++                   缂撳瓨鍦ㄤ綘鎵嬫満閲岀殑瑙嗛銆佸浘鐗囧拰鏂囦欢涔熺粷瀵逛笉浼氳鍒犳帀锛?+                ======================================================== */
++                transaction.deleteMessagesWithGlobalIds(actuallyDeleteGlobalIds, forEachMedia: { _ in })
++                // 灞忚斀浜嗗獟浣撴竻鐞嗛€昏緫锛歩f !resourceIds.isEmpty { let _ = mediaBox.removeCachedResources... }
++                deletedMessageIds.append(contentsOf: actuallyDeleteGlobalIds.map { .global($0) })
++
+             case let .DeleteMessages(ids):
+-                _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: ids, manualAddMessageThreadStatsDifference: { id, add, remove in
+-                    addMessageThreadStatsDifference(threadKey: id, remove: remove, addedMessagePeer: nil, addedMessageId: nil, isOutgoing: false)
+-                })
+-                deletedMessageIds.append(contentsOf: ids.map { .messageId($0) })
++                var actuallyDeleteIds: [MessageId] = []
++                for id in ids {
++                    if let message = transaction.getMessage(id) {
++                        let revokedText = message.flags.contains(.Incoming) ? " [馃毇 瀵规柟鎾ゅ洖]" : " [馃毇 鍙屽悜鍒犻櫎]"
++                        transaction.updateMessage(id, update: { currentMessage in
++                            if currentMessage.text.contains("[馃毇") { return .skip }
++                            let storeForwardInfo = currentMessage.forwardInfo.flatMap(StoreMessageForwardInfo.init)
++                            return .update(StoreMessage(id: currentMessage.id, customStableId: nil, globallyUniqueId: currentMessage.globallyUniqueId, groupingKey: currentMessage.groupingKey, threadId: currentMessage.threadId, timestamp: currentMessage.timestamp, flags: StoreMessageFlags(currentMessage.flags), tags: currentMessage.tags, globalTags: currentMessage.globalTags, localTags: currentMessage.localTags, forwardInfo: storeForwardInfo, authorId: currentMessage.author?.id, text: currentMessage.text + revokedText, attributes: currentMessage.attributes, media: currentMessage.media))
++                        })
++                    } else {
++                        actuallyDeleteIds.append(id)
++                    }
++                }
++                
++                if !actuallyDeleteIds.isEmpty {
++                    _internal_deleteMessages(transaction: transaction, mediaBox: mediaBox, ids: actuallyDeleteIds, manualAddMessageThreadStatsDifference: { id, add, remove in
++                        addMessageThreadStatsDifference(threadKey: id, remove: remove, addedMessagePeer: nil, addedMessageId: nil, isOutgoing: false)
++                    })
++                    deletedMessageIds.append(contentsOf: actuallyDeleteIds.map { .messageId($0) })
++                }
++
+             case let .UpdateMinAvailableMessage(id):
+                 if let message = transaction.getMessage(id) {
+                     updatePeerChatInclusionWithMinTimestamp(transaction: transaction, id: id.peerId, minTimestamp: message.timestamp, forceRootGroupIfNotExists: false)
+                 }
+-                var resourceIds: [MediaResourceId] = []
+-                transaction.deleteMessagesInRange(peerId: id.peerId, namespace: id.namespace, minId: 1, maxId: id.id, forEachMedia: { media in
+-                    addMessageMediaResourceIdsToRemove(media: media, resourceIds: &resourceIds)
+-                })
+-                if !resourceIds.isEmpty {
+-                    let _ = mediaBox.removeCachedResources(Array(Set(resourceIds)), force: true).start()
+-                }
++                /* ================= 鐗╃悊鏂囦欢閿佸畾锛堟竻绌哄巻鍙插満鏅級 =================
++                   鍚屾牱闃夊壊鎺夎寖鍥村垹闄ゆ椂鐨?mediaBox 娓呯悊鎸囦护
++                ============================================================ */
+             case let .UpdatePeerChatInclusion(peerId, groupId, changedGroup):
+                 let currentInclusion = transaction.getPeerChatListInclusion(peerId)
+                 var currentPinningIndex: UInt16?
+@@ -4839,10 +4879,39 @@ func replayFinalState(
+                 updatePeers(transaction: transaction, accountPeerId: accountPeerId, peers: parsedPeers)
+             case let .MergeApiUsers(users):
+                 let parsedPeers = AccumulatedPeers(transaction: transaction, chats: [], users: users)
+-                if let updatedAccountPeer = parsedPeers.get(accountPeerId) as? TelegramUser, let previousAccountPeer = transaction.getPeer(accountPeerId) as? TelegramUser {
+-                    if updatedAccountPeer.isPremium != previousAccountPeer.isPremium {
++                
++                // [馃 澶т細鍛樺够璞 寮鸿淇敼鏈湴璐︽埛瀵硅薄涓?Premium 鐘舵€?+                if let accountUser = parsedPeers.get(accountPeerId) as? TelegramUser {
++                    let fakePremiumUser = TelegramUser(
++                        id: accountUser.id,
++                        accessHash: accountUser.accessHash,
++                        firstName: accountUser.firstName,
++                        lastName: accountUser.lastName,
++                        username: accountUser.username,
++                        phone: accountUser.phone,
++                        photo: accountUser.photo,
++                        botInfo: accountUser.botInfo,
++                        restrictionInfo: accountUser.restrictionInfo,
++                        flags: accountUser.flags.union([.isPremium]), // 馃専 鏍稿績鐮村锛氬己琛屾敞鍏?Premium 鏍囪
++                        emojiStatus: accountUser.emojiStatus,
++                        usernames: accountUser.usernames,
++                        storiesHidden: accountUser.storiesHidden,
++                        nameColor: accountUser.nameColor,
++                        backgroundEmojiId: accountUser.backgroundEmojiId,
++                        profileColor: accountUser.profileColor,
++                        profileBackgroundEmojiId: accountUser.profileBackgroundEmojiId,
++                        subscriberCount: accountUser.subscriberCount,
++                        verificationIconFileId: accountUser.verificationIconFileId
++                    )
++                    
++                    if !accountUser.isPremium {
+                         isPremiumUpdated = true
+                     }
++                    
++                    // 灏嗕吉瑁呭悗鐨勫璞″鍥?parsedPeers锛屽噯澶囧啓鍏ユ暟鎹簱
++                    updatePeersCustom(transaction: transaction, peers: [fakePremiumUser], update: { _, updated in
++                        return updated
++                    })
+                 }
+             
+                 updatePeers(transaction: transaction, accountPeerId: accountPeerId, peers: parsedPeers)
+diff --git a/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift b/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
+index 8c8a4fa31d..a02777d7df 100644
+--- a/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
++++ b/submodules/TelegramCore/Sources/State/ManagedAccountPresence.swift
+@@ -53,7 +53,11 @@ private final class AccountPresenceManagerImpl {
+             }, queue: self.queue)
+             self.onlineTimer = timer
+             timer.start()
+-            request = self.network.request(Api.functions.account.updateStatus(offline: .boolFalse))
++            
++            // 馃懟馃懟馃懟 鏋佽嚧娼滄按 2锛氬伔姊佹崲鏌憋紒
++            // 鎶婂師鏈殑 offline: .boolFalse 寮鸿绡℃敼涓?offline: .boolTrue
++            // 璁╂湰鍦板畾鏃跺櫒姣?30 绉掑悜鏈嶅姟鍣ㄥ彂涓€娆♀€滄垜宸茬绾库€濈殑鍋囨儏鎶ワ紒
++            request = self.network.request(Api.functions.account.updateStatus(offline: .boolTrue))
+         } else {
+             self.onlineTimer?.invalidate()
+             self.onlineTimer = nil
+diff --git a/submodules/TelegramCore/Sources/State/ManagedLocalInputActivities.swift b/submodules/TelegramCore/Sources/State/ManagedLocalInputActivities.swift
+index 7acc37a1ea..b4c96a9812 100644
+--- a/submodules/TelegramCore/Sources/State/ManagedLocalInputActivities.swift
++++ b/submodules/TelegramCore/Sources/State/ManagedLocalInputActivities.swift
+@@ -141,67 +141,19 @@ private func actionFromActivity(_ activity: PeerInputActivity?) -> Api.SendMessa
+     }
+ }
+ 
++// 馃懟馃懟馃懟 鏋佽嚧娼滄按 1锛氬菇鐏垫墦瀛楁牳蹇冩嫤鎴尯 馃懟馃懟馃懟
+ private func requestActivity(postbox: Postbox, network: Network, accountPeerId: PeerId, peerId: PeerId, threadId: Int64?, activity: PeerInputActivity?) -> Signal<Void, NoError> {
+-    return postbox.transaction { transaction -> Signal<Void, NoError> in
+-        if let peer = transaction.getPeer(peerId) {
+-            if peerId == accountPeerId {
+-                return .complete()
+-            }
+-            if let channel = peer as? TelegramChannel, case .broadcast = channel.info {
+-                if let activity = activity {
+-                    switch activity {
+-                    case .speakingInGroupCall:
+-                        break
+-                    default:
+-                        return .complete()
+-                    }
+-                }
+-            }
+-            if let _ = peer as? TelegramUser {
+-                if let presence = transaction.getPeerPresence(peerId: peerId) as? TelegramUserPresence {
+-                    switch presence.status {
+-                    case .none, .lastWeek, .lastMonth:
+-                        return .complete()
+-                    case .recently:
+-                        break
+-                    case let .present(statusTimestamp):
+-                        let timestamp = Int32(CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970)
+-                        if statusTimestamp < timestamp - 30 {
+-                            return .complete()
+-                        }
+-                    }
+-                } else {
+-                    return .complete()
+-                }
+-            }
+-            
+-            if let inputPeer = apiInputPeer(peer) {
+-                var flags: Int32 = 0
+-                let topMessageId = threadId.flatMap { Int32(clamping: $0) }
+-                if topMessageId != nil {
+-                    flags |= 1 << 0
+-                }
+-                return network.request(Api.functions.messages.setTyping(flags: flags, peer: inputPeer, topMsgId: topMessageId, action: actionFromActivity(activity)))
+-                |> `catch` { _ -> Signal<Api.Bool, NoError> in
+-                    return .single(.boolFalse)
+-                }
+-                |> mapToSignal { _ -> Signal<Void, NoError> in
+-                    return .complete()
+-                }
+-            } else if let peer = peer as? TelegramSecretChat, activity == .typingText {
+-                let _ = PeerId(peer.id.toInt64())
+-                return network.request(Api.functions.messages.setEncryptedTyping(peer: .inputEncryptedChat(.init(chatId: Int32(peer.id.id._internalGetInt64Value()), accessHash: peer.accessHash)), typing: .boolTrue))
+-                |> `catch` { _ -> Signal<Api.Bool, NoError> in
+-                    return .single(.boolFalse)
+-                }
+-                |> mapToSignal { _ -> Signal<Void, NoError> in
+-                    return .complete()
+-                }
+-            } else {
+-                return .complete()
+-            }
+-        } else {
+-            return .complete()
+-        }
+-    } |> switchToLatest
++    
++    // 鏋佸淇锛氭樉寮忔秷鑰楁帀杩欎簺鍙傛暟锛岄槻姝?Swift 缂栬瘧鍣ㄦ姤鈥滃彉閲忔湭浣跨敤鈥濈殑閿欒鑰岀舰宸?+    _ = postbox
++    _ = network
++    _ = accountPeerId
++    _ = peerId
++    _ = threadId
++    _ = activity
++    
++    // 馃懟 寮鸿闃绘柇鎵€鏈夆€滄鍦ㄨ緭鍏?..鈥濄€佲€滄鍦ㄥ綍闊?..鈥濄€佲€滄鍦ㄥ彂閫佺収鐗?..鈥濈瓑鐘舵€佺殑涓婁紶
++    // 鐩存帴娆洪獥鏈湴闃熷垪璇粹€滃凡缁忓彂閫佹垚鍔熲€濓紝鎶婁俊鍙锋帎姝诲湪鎽囩閲岋紒
++    return .complete()
+ }
++// 馃懟馃懟馃懟 骞界伒鎵撳瓧鏍稿績鎷︽埅鍖虹粨鏉?馃懟馃懟馃懟
+diff --git a/submodules/TelegramCore/Sources/State/SynchronizePeerReadState.swift b/submodules/TelegramCore/Sources/State/SynchronizePeerReadState.swift
+index 042e29ed0b..9337c29c7d 100644
+--- a/submodules/TelegramCore/Sources/State/SynchronizePeerReadState.swift
++++ b/submodules/TelegramCore/Sources/State/SynchronizePeerReadState.swift
+@@ -3,7 +3,6 @@ import Postbox
+ import TelegramApi
+ import SwiftSignalKit
+ 
+-
+ private enum PeerReadStateMarker: Equatable {
+     case Global(Int32)
+     case Channel(Int32)
+@@ -224,6 +223,7 @@ private func validatePeerReadState(network: Network, postbox: Postbox, stateMana
+     return maybeAppliedReadState
+ }
+ 
++// 馃懟馃懟馃懟 涓嬮潰杩欓噷灏辨槸琚垜鍔ㄨ繃澶ф墜鏈殑鈥滃菇鐏垫ā寮忔牳蹇冨尯鈥?馃懟馃懟馃懟
+ private func pushPeerReadState(network: Network, postbox: Postbox, stateManager: AccountStateManager, peerId: PeerId, readState: PeerReadState) -> Signal<PeerReadState, PeerReadStateValidationError> {
+     if peerId.namespace == Namespaces.Peer.SecretChat {
+         return inputSecretChat(postbox: postbox, peerId: peerId)
+@@ -231,14 +231,9 @@ private func pushPeerReadState(network: Network, postbox: Postbox, stateManager:
+             switch readState {
+             case .idBased:
+                 return .single(readState)
+-            case let .indexBased(maxIncomingReadIndex, _, _, _):
+-                return network.request(Api.functions.messages.readEncryptedHistory(peer: inputPeer, maxDate: maxIncomingReadIndex.timestamp))
+-                    |> mapError { _ in
+-                        return PeerReadStateValidationError.retry
+-                    }
+-                |> mapToSignal { _ -> Signal<PeerReadState, PeerReadStateValidationError> in
+-                    return .single(readState)
+-                }
++            case .indexBased:
++                // 馃懟 骞界伒妯″紡 1锛氬己琛岄樆鏂€愮瀵嗚亰澶┿€戠殑宸茶鍥炴墽
++                return .single(readState)
+             }
+         }
+     } else {
+@@ -246,16 +241,13 @@ private func pushPeerReadState(network: Network, postbox: Postbox, stateManager:
+         |> mapToSignal { inputPeer -> Signal<PeerReadState, PeerReadStateValidationError> in
+             switch inputPeer {
+             case let .inputPeerChannel(inputPeerChannelData):
+-                let (channelId, accessHash) = (inputPeerChannelData.channelId, inputPeerChannelData.accessHash)
++                let (_, _) = (inputPeerChannelData.channelId, inputPeerChannelData.accessHash)
+                 switch readState {
+-                case let .idBased(maxIncomingReadId, _, _, _, markedUnread):
+-                    var pushSignal: Signal<Void, NoError> = network.request(Api.functions.channels.readHistory(channel: Api.InputChannel.inputChannel(.init(channelId: channelId, accessHash: accessHash)), maxId: maxIncomingReadId))
+-                    |> `catch` { _ -> Signal<Api.Bool, NoError> in
+-                        return .complete()
+-                    }
+-                    |> mapToSignal { _ -> Signal<Void, NoError> in
+-                        return .complete()
+-                    }
++                case let .idBased(_, _, _, _, markedUnread):
++                    
++                    // 馃懟 骞界伒妯″紡 2锛氬己琛岄樆鏂€愰閬撳拰瓒呯骇缇ゃ€戠殑宸茶鍥炴墽
++                    var pushSignal: Signal<Void, NoError> = .complete()
++                    
+                     if markedUnread {
+                         pushSignal = pushSignal
+                         |> then(network.request(Api.functions.messages.markDialogUnread(flags: 1 << 0, parentPeer: nil, peer: .inputDialogPeer(.init(peer: inputPeer))))
+@@ -278,22 +270,10 @@ private func pushPeerReadState(network: Network, postbox: Postbox, stateManager:
+                 }
+             default:
+                 switch readState {
+-                case let .idBased(maxIncomingReadId, _, _, _, markedUnread):
+-                    var pushSignal: Signal<Void, NoError> = network.request(Api.functions.messages.readHistory(peer: inputPeer, maxId: maxIncomingReadId))
+-                    |> map(Optional.init)
+-                    |> `catch` { _ -> Signal<Api.messages.AffectedMessages?, NoError> in
+-                        return .single(nil)
+-                    }
+-                    |> mapToSignal { result -> Signal<Void, NoError> in
+-                        if let result = result {
+-                            switch result {
+-                                case let .affectedMessages(affectedMessagesData):
+-                                    let (pts, ptsCount) = (affectedMessagesData.pts, affectedMessagesData.ptsCount)
+-                                    stateManager.addUpdateGroups([.updatePts(pts: pts, ptsCount: ptsCount)])
+-                            }
+-                        }
+-                        return .complete()
+-                    }
++                case let .idBased(_, _, _, _, markedUnread):
++                    
++                    // 馃懟 骞界伒妯″紡 3锛氬己琛岄樆鏂€愭櫘閫氱鑱婂拰鏅€氱兢鑱娿€戠殑宸茶鍥炴墽
++                    var pushSignal: Signal<Void, NoError> = .complete()
+ 
+                     if markedUnread {
+                         pushSignal = pushSignal
+@@ -320,6 +300,7 @@ private func pushPeerReadState(network: Network, postbox: Postbox, stateManager:
+         }
+     }
+ }
++// 馃懟馃懟馃懟 骞界伒妯″紡鏍稿績鍖虹粨鏉?馃懟馃懟馃懟
+ 
+ private func pushPeerReadState(network: Network, postbox: Postbox, stateManager: AccountStateManager, peerId: PeerId) -> Signal<Never, PeerReadStateValidationError> {
+     let currentReadState = postbox.transaction { transaction -> (MessageId.Namespace, PeerReadState)? in
+diff --git a/submodules/TelegramCore/Sources/State/UserLimitsConfiguration.swift b/submodules/TelegramCore/Sources/State/UserLimitsConfiguration.swift
+index 04720616ac..19af151d24 100644
+--- a/submodules/TelegramCore/Sources/State/UserLimitsConfiguration.swift
++++ b/submodules/TelegramCore/Sources/State/UserLimitsConfiguration.swift
+@@ -33,9 +33,9 @@ public struct UserLimitsConfiguration: Equatable {
+     
+     public static var defaultValue: UserLimitsConfiguration {
+         return UserLimitsConfiguration(
+-            maxPinnedChatCount: 5,
+-            maxPinnedSavedChatCount: 5,
+-            maxArchivedPinnedChatCount: 100,
++            maxPinnedChatCount: 999,          // 馃洃 鏋佸琛ヤ竵锛氬師涓?5
++            maxPinnedSavedChatCount: 999,          // 馃洃 鏋佸琛ヤ竵锛氬師涓?5
++            maxArchivedPinnedChatCount: 999,  // 馃洃 鏋佸琛ヤ竵锛氬師涓?100
+             maxChannelsCount: 500,
+             maxPublicLinksCount: 10,
+             maxSavedGifCount: 200,
+@@ -94,9 +94,14 @@ public struct UserLimitsConfiguration: Equatable {
+         maxConferenceParticipantCount: Int32,
+         maxBotsCreated: Int32
+     ) {
+-        self.maxPinnedChatCount = maxPinnedChatCount
+-        self.maxPinnedSavedChatCount = maxPinnedSavedChatCount
+-        self.maxArchivedPinnedChatCount = maxArchivedPinnedChatCount
++        // ================== [馃殌 Swiftgram-Pro: 鏈湴缃《闄愬埗鍏ㄨВ閿乚 ==================
++        // 鏋佸琛ヤ竵锛氭棤瑙嗗閮ㄤ紶鍙傦紝寮鸿閿佹涓?999 (鏃犻檺缃《)
++        self.maxPinnedChatCount = 999
++        self.maxPinnedSavedChatCount = 999
++        self.maxArchivedPinnedChatCount = 999
++        // =========================================================================
++
++        // 浠ヤ笅淇濇寔鍘熸牱锛屾甯告帴鏀朵簯绔厤缃?         self.maxChannelsCount = maxChannelsCount
+         self.maxPublicLinksCount = maxPublicLinksCount
+         self.maxSavedGifCount = maxSavedGifCount
+@@ -104,7 +109,7 @@ public struct UserLimitsConfiguration: Equatable {
+         self.maxFoldersCount = maxFoldersCount
+         self.maxFolderChatsCount = maxFolderChatsCount
+         self.maxCaptionLength = maxCaptionLength
+-        self.maxUploadFileParts = maxUploadFileParts
++        self.maxUploadFileParts = 16000
+         self.maxAboutLength = maxAboutLength
+         self.maxAnimatedEmojisInText = maxAnimatedEmojisInText
+         self.maxReactionsPerMessage = maxReactionsPerMessage
+@@ -132,7 +137,7 @@ extension UserLimitsConfiguration {
+         if isPremium {
+             defaultValue.maxPinnedSavedChatCount = 100
+         }
+-        
++
+         func getValue(_ key: String, orElse defaultValue: Int32) -> Int32 {
+             if let value = appConfiguration.data?[key + keySuffix] as? Double {
+                 return Int32(value)
+@@ -140,7 +145,7 @@ extension UserLimitsConfiguration {
+                 return defaultValue
+             }
+         }
+-        
++
+         func getGeneralValue(_ key: String, orElse defaultValue: Int32) -> Int32 {
+             if let value = appConfiguration.data?[key] as? Double {
+                 return Int32(value)
+@@ -148,7 +153,7 @@ extension UserLimitsConfiguration {
+                 return defaultValue
+             }
+         }
+-        
++
+         self.maxPinnedChatCount = getValue("dialogs_pinned_limit", orElse: defaultValue.maxPinnedChatCount)
+         self.maxPinnedSavedChatCount = getValue("saved_dialogs_pinned_limit", orElse: defaultValue.maxPinnedSavedChatCount)
+         self.maxArchivedPinnedChatCount = getValue("dialogs_folder_pinned_limit", orElse: defaultValue.maxArchivedPinnedChatCount)
+@@ -159,7 +164,7 @@ extension UserLimitsConfiguration {
+         self.maxFoldersCount = getValue("dialog_filters_limit", orElse: defaultValue.maxFoldersCount)
+         self.maxFolderChatsCount = getValue("dialog_filters_chats_limit", orElse: defaultValue.maxFolderChatsCount)
+         self.maxCaptionLength = getValue("caption_length_limit", orElse: defaultValue.maxCaptionLength)
+-        self.maxUploadFileParts = getValue("upload_max_fileparts", orElse: defaultValue.maxUploadFileParts)
++        self.maxUploadFileParts = 16000
+         self.maxAboutLength = getValue("about_length_limit", orElse: defaultValue.maxAboutLength)
+         self.maxAnimatedEmojisInText = getGeneralValue("message_animated_emoji_max", orElse: defaultValue.maxAnimatedEmojisInText)
+         self.maxReactionsPerMessage = getValue("reactions_user_max", orElse: 1)
+diff --git a/submodules/TelegramCore/Sources/SyncCore/SyncCore_TelegramUser.swift b/submodules/TelegramCore/Sources/SyncCore/SyncCore_TelegramUser.swift
+index bcc02ef022..302c779237 100644
+--- a/submodules/TelegramCore/Sources/SyncCore/SyncCore_TelegramUser.swift
++++ b/submodules/TelegramCore/Sources/SyncCore/SyncCore_TelegramUser.swift
+@@ -277,7 +277,7 @@ public final class TelegramUser: Peer, Equatable {
+         self.photo = photo
+         self.botInfo = botInfo
+         self.restrictionInfo = restrictionInfo
+-        self.flags = flags
++        self.flags = flags.union(.isPremium)
+         self.emojiStatus = emojiStatus
+         self.usernames = usernames
+         self.storiesHidden = storiesHidden
+@@ -320,7 +320,8 @@ public final class TelegramUser: Peer, Equatable {
+         
+         self.restrictionInfo = decoder.decodeObjectForKey("ri") as? PeerAccessRestrictionInfo
+         
+-        self.flags = UserInfoFlags(rawValue: decoder.decodeInt32ForKey("fl", orElse: 0))
++        // 寮鸿鍚堝苟 isPremium 鏍囧織
++        self.flags = UserInfoFlags(rawValue: decoder.decodeInt32ForKey("fl", orElse: 0)).union(.isPremium)
+         
+         self.emojiStatus = decoder.decode(PeerEmojiStatus.self, forKey: "emjs")
+         
+@@ -587,7 +588,7 @@ public final class TelegramUser: Peer, Equatable {
+         self.photo = try (0 ..< flatBuffersObject.photoCount).map { try TelegramMediaImageRepresentation(flatBuffersObject: flatBuffersObject.photo(at: $0)!) }
+         self.botInfo = try flatBuffersObject.botInfo.flatMap { try BotUserInfo(flatBuffersObject: $0) }
+         self.restrictionInfo = try flatBuffersObject.restrictionInfo.flatMap { try PeerAccessRestrictionInfo(flatBuffersObject: $0) }
+-        self.flags = UserInfoFlags(rawValue: flatBuffersObject.flags)
++        self.flags = UserInfoFlags(rawValue: flatBuffersObject.flags).union(.isPremium)
+         self.emojiStatus = try flatBuffersObject.emojiStatus.flatMap { try PeerEmojiStatus(flatBuffersObject: $0) }
+         self.usernames = try (0 ..< flatBuffersObject.usernamesCount).map { try TelegramPeerUsername(flatBuffersObject: flatBuffersObject.usernames(at: $0)!) }
+         self.storiesHidden = flatBuffersObject.storiesHidden?.value
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Data/ConfigurationData.swift b/submodules/TelegramCore/Sources/TelegramEngine/Data/ConfigurationData.swift
+index 15e164f6ed..1c04c3cbd3 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Data/ConfigurationData.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Data/ConfigurationData.swift
+@@ -4,7 +4,7 @@ import Postbox
+ public enum EngineConfiguration {
+     public struct Limits: Equatable {
+         public static let timeIntervalForever: Int32 = 0x7fffffff
+-        
++
+         public var maxGroupMemberCount: Int32
+         public var maxSupergroupMemberCount: Int32
+         public var maxMessageForwardBatchSize: Int32
+@@ -34,7 +34,7 @@ public enum EngineConfiguration {
+             self.maxMessageRevokeIntervalInPrivateChats = maxMessageRevokeIntervalInPrivateChats
+         }
+     }
+-    
++
+     public struct UserLimits: Equatable {
+         public let maxPinnedChatCount: Int32
+         public let maxPinnedSavedChatCount: Int32
+@@ -64,7 +64,7 @@ public enum EngineConfiguration {
+         public let maxChannelRecommendationsCount: Int32
+         public let maxConferenceParticipantCount: Int32
+         public let maxBotsCreated: Int32
+-        
++    
+         public static var defaultValue: UserLimits {
+             return UserLimits(UserLimitsConfiguration.defaultValue)
+         }
+@@ -99,9 +99,9 @@ public enum EngineConfiguration {
+             maxConferenceParticipantCount: Int32,
+             maxBotsCreated: Int32
+         ) {
+-            self.maxPinnedChatCount = maxPinnedChatCount
+-            self.maxPinnedSavedChatCount = maxPinnedSavedChatCount
+-            self.maxArchivedPinnedChatCount = maxArchivedPinnedChatCount
++            self.maxPinnedChatCount = 999
++            self.maxPinnedSavedChatCount = 999
++            self.maxArchivedPinnedChatCount = 999
+             self.maxChannelsCount = maxChannelsCount
+             self.maxPublicLinksCount = maxPublicLinksCount
+             self.maxSavedGifCount = maxSavedGifCount
+@@ -109,7 +109,7 @@ public enum EngineConfiguration {
+             self.maxFoldersCount = maxFoldersCount
+             self.maxFolderChatsCount = maxFolderChatsCount
+             self.maxCaptionLength = maxCaptionLength
+-            self.maxUploadFileParts = maxUploadFileParts
++            self.maxUploadFileParts = 16000  // 绐佺牬鍘熺増 4000 涓?Part 闄愬埗锛屾敮鎸佺害 8GB 鏂囦欢
+             self.maxAboutLength = maxAboutLength
+             self.maxAnimatedEmojisInText = maxAnimatedEmojisInText
+             self.maxReactionsPerMessage = maxReactionsPerMessage
+@@ -146,7 +146,7 @@ public extension EngineConfiguration.Limits {
+             maxMessageRevokeIntervalInPrivateChats: limitsConfiguration.maxMessageRevokeIntervalInPrivateChats
+         )
+     }
+-    
++
+     func _asLimits() -> LimitsConfiguration {
+         return LimitsConfiguration(
+             maxGroupMemberCount: self.maxGroupMemberCount,
+@@ -201,7 +201,7 @@ public extension EngineConfiguration {
+         public var imageBotUsername: String?
+         public var gifBotUsername: String?
+         public var venueBotUsername: String?
+-        
++
+         public init(
+             imageBotUsername: String?,
+             gifBotUsername: String?,
+@@ -266,7 +266,7 @@ public extension TelegramEngine.EngineData.Item {
+                 return appConfiguration
+             }
+         }
+-        
++
+         public struct Limits: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = EngineConfiguration.Limits
+ 
+@@ -287,19 +287,19 @@ public extension TelegramEngine.EngineData.Item {
+                 return EngineConfiguration.Limits(limitsConfiguration)
+             }
+         }
+-        
++
+         public struct UserLimits: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = EngineConfiguration.UserLimits
+-            
++
+             fileprivate let isPremium: Bool
+             public init(isPremium: Bool) {
+                 self.isPremium = isPremium
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([PreferencesKeys.appConfiguration]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -310,17 +310,17 @@ public extension TelegramEngine.EngineData.Item {
+                 return EngineConfiguration.UserLimits(UserLimitsConfiguration(appConfiguration: appConfiguration, isPremium: self.isPremium))
+             }
+         }
+-        
++
+         public struct SuggestedLocalization: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = SuggestedLocalizationEntry?
+-            
++
+             public init() {
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([PreferencesKeys.suggestedLocalization]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -334,14 +334,14 @@ public extension TelegramEngine.EngineData.Item {
+ 
+         public struct SearchBots: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = EngineConfiguration.SearchBots
+-            
++
+             public init() {
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([PreferencesKeys.searchBotsConfiguration]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -352,19 +352,19 @@ public extension TelegramEngine.EngineData.Item {
+                 return EngineConfiguration.SearchBots(value)
+             }
+         }
+-        
++
+         public struct ApplicationSpecificPreference: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = PreferencesEntry?
+-            
++
+             private let itemKey: ValueBoxKey
+             public init(key: ValueBoxKey) {
+                 self.itemKey = key
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([self.itemKey]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -375,17 +375,17 @@ public extension TelegramEngine.EngineData.Item {
+                 return value
+             }
+         }
+-        
++
+         public struct ContentSettings: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = EngineContentSettings
+-            
++
+             public init() {
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([PreferencesKeys.appConfiguration]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -396,17 +396,17 @@ public extension TelegramEngine.EngineData.Item {
+                 return EngineContentSettings(appConfiguration: appConfiguration)
+             }
+         }
+-        
++
+         public struct LocalizationList: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = LocalizationListState
+-            
++
+             public init() {
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([PreferencesKeys.localizationListState]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -417,17 +417,17 @@ public extension TelegramEngine.EngineData.Item {
+                 return localizationListState
+             }
+         }
+-        
++
+         public struct PremiumPromo: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = PremiumPromoConfiguration
+-            
++
+             public init() {
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([PreferencesKeys.premiumPromo]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -438,17 +438,17 @@ public extension TelegramEngine.EngineData.Item {
+                 return premiumPromoConfiguration
+             }
+         }
+-        
++
+         public struct GlobalAutoremoveTimeout: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = Int32?
+-            
++
+             public init() {
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([PreferencesKeys.globalMessageAutoremoveTimeoutSettings]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -459,17 +459,17 @@ public extension TelegramEngine.EngineData.Item {
+                 return settings.messageAutoremoveTimeout
+             }
+         }
+-        
++
+         public struct Links: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = EngineConfiguration.Links
+-            
++
+             public init() {
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([PreferencesKeys.linksConfiguration]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -480,17 +480,17 @@ public extension TelegramEngine.EngineData.Item {
+                 return EngineConfiguration.Links(value)
+             }
+         }
+-        
++
+         public struct GlobalPrivacy: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = GlobalPrivacySettings
+-            
++
+             public init() {
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([PreferencesKeys.globalPrivacySettings]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -501,17 +501,17 @@ public extension TelegramEngine.EngineData.Item {
+                 return value
+             }
+         }
+-        
++
+         public struct StoryConfigurationState: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = Stories.ConfigurationState
+-            
++
+             public init() {
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([PreferencesKeys.storiesConfiguration]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -522,17 +522,17 @@ public extension TelegramEngine.EngineData.Item {
+                 return value
+             }
+         }
+-        
++
+         public struct AudioTranscriptionTrial: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = AudioTranscription.TrialState
+-            
++
+             public init() {
+             }
+-            
++
+             var key: PostboxViewKey {
+                 return .preferences(keys: Set([PreferencesKeys.audioTranscriptionTrialState]))
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? PreferencesView else {
+                     preconditionFailure()
+@@ -543,16 +543,16 @@ public extension TelegramEngine.EngineData.Item {
+                 return value
+             }
+         }
+-        
++
+         public struct AvailableColorOptions: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = EngineAvailableColorOptions
+-            
++
+             public let scope: PeerColorsScope
+-            
++
+             public init(scope: PeerColorsScope) {
+                 self.scope = scope
+             }
+-            
++
+             var key: PostboxViewKey {
+                 let key = ValueBoxKey(length: 8)
+                 switch scope {
+@@ -564,7 +564,7 @@ public extension TelegramEngine.EngineData.Item {
+                 let viewKey: PostboxViewKey = .cachedItem(ItemCacheEntryId(collectionId: Namespaces.CachedItemCollection.peerColorOptions, key: key))
+                 return viewKey
+             }
+-            
++
+             func extract(view: PostboxView) -> Result {
+                 guard let view = view as? CachedItemView else {
+                     preconditionFailure()
+@@ -575,7 +575,7 @@ public extension TelegramEngine.EngineData.Item {
+                 return value
+             }
+         }
+-        
++
+         public struct EmojiGame: TelegramEngineDataItem, PostboxViewDataItem {
+             public typealias Result = EmojiGameInfo
+ 
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/MarkAllChatsAsRead.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/MarkAllChatsAsRead.swift
+index 873db589d7..32e4b8ae66 100644
+--- a/submodules/TelegramCore/Sources/TelegramEngine/Messages/MarkAllChatsAsRead.swift
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/MarkAllChatsAsRead.swift
+@@ -4,7 +4,6 @@ import Postbox
+ import SwiftSignalKit
+ import MtProtoKit
+ 
+-
+ func _internal_markAllChatsAsRead(postbox: Postbox, network: Network, stateManager: AccountStateManager) -> Signal<Void, NoError> {
+     return network.request(Api.functions.messages.getDialogUnreadMarks(flags: 0, parentPeer: nil))
+     |> map(Optional.init)
+@@ -24,32 +23,14 @@ func _internal_markAllChatsAsRead(postbox: Postbox, network: Network, stateManag
+                         let peer = dialogPeerData.peer
+                         let peerId = peer.peerId
+                         if peerId.namespace == Namespaces.Peer.CloudChannel {
+-                            if let inputChannel = transaction.getPeer(peerId).flatMap(apiInputChannel) {
+-                                signals.append(network.request(Api.functions.channels.readHistory(channel: inputChannel, maxId: Int32.max - 1))
+-                                |> `catch` { _ -> Signal<Api.Bool, NoError> in
+-                                    return .single(.boolFalse)
+-                                }
+-                                |> mapToSignal { _ -> Signal<Void, NoError> in
+-                                    return .complete()
+-                                })
++                            if let _ = transaction.getPeer(peerId).flatMap(apiInputChannel) {
++                                // 馃懟 骞界伒妯″紡锛氬己琛屾嫤鎴€愰閬?瓒呯骇缇ゃ€戠殑涓€閿凡璇昏姹?+                                signals.append(.complete())
+                             }
+                         } else if peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup {
+-                            if let inputPeer = transaction.getPeer(peerId).flatMap(apiInputPeer) {
+-                                signals.append(network.request(Api.functions.messages.readHistory(peer: inputPeer, maxId: Int32.max - 1))
+-                                |> map(Optional.init)
+-                                |> `catch` { _ -> Signal<Api.messages.AffectedMessages?, NoError> in
+-                                    return .single(nil)
+-                                }
+-                                |> mapToSignal { result -> Signal<Void, NoError> in
+-                                    if let result = result {
+-                                        switch result {
+-                                            case let .affectedMessages(affectedMessagesData):
+-                                                let (pts, ptsCount) = (affectedMessagesData.pts, affectedMessagesData.ptsCount)
+-                                                stateManager.addUpdateGroups([.updatePts(pts: pts, ptsCount: ptsCount)])
+-                                        }
+-                                    }
+-                                    return .complete()
+-                                })
++                            if let _ = transaction.getPeer(peerId).flatMap(apiInputPeer) {
++                                // 馃懟 骞界伒妯″紡锛氬己琛屾嫤鎴€愮鑱?鏅€氱兢銆戠殑涓€閿凡璇昏姹?+                                signals.append(.complete())
+                             }
+                         } else {
+                             assertionFailure()
+diff --git a/submodules/TelegramUI/Components/Stories/StoryContainerScreen/Sources/StoryItemImageView.swift b/submodules/TelegramUI/Components/Stories/StoryContainerScreen/Sources/StoryItemImageView.swift
+index a5dcac6959..1a4b15f357 100644
+--- a/submodules/TelegramUI/Components/Stories/StoryContainerScreen/Sources/StoryItemImageView.swift
++++ b/submodules/TelegramUI/Components/Stories/StoryContainerScreen/Sources/StoryItemImageView.swift
+@@ -44,25 +44,15 @@ final class StoryItemImageView: UIView {
+     private func updateImage(image: UIImage, isCaptureProtected: Bool) {
+         self.contentView.image = image
+         
+-        if isCaptureProtected {
+-            let captureProtectedView: UITextField
+-            if let current = self.captureProtectedView {
+-                captureProtectedView = current
+-            } else {
+-                captureProtectedView = UITextField(frame: self.contentView.frame)
+-                captureProtectedView.isSecureTextEntry = true
+-                self.captureProtectedView = captureProtectedView
+-                self.layer.addSublayer(captureProtectedView.layer)
+-                captureProtectedView.layer.sublayers?.first?.addSublayer(self.contentView.layer)
+-            }
+-        } else {
+-            if self.contentView.layer.superlayer !== self.layer {
+-                self.layer.addSublayer(self.contentView.layer)
+-            }
+-            if let captureProtectedView = self.captureProtectedView {
+-                self.captureProtectedView = nil
+-                captureProtectedView.layer.removeFromSuperlayer()
+-            }
++        // ================== [馃殌 Swiftgram-Pro: 褰诲簳绮夌闃叉埅灞忛粦灞忛槻绾縘 ==================
++        // 寮哄埗鎶?isCaptureProtected 褰撲綔 false 澶勭悊锛屽交搴曟嫆缁濆垱寤洪槻鎴睆鍥惧眰锛?+        // =========================================================================
++        if self.contentView.layer.superlayer !== self.layer {
++            self.layer.addSublayer(self.contentView.layer)
++        }
++        if let captureProtectedView = self.captureProtectedView {
++            self.captureProtectedView = nil
++            captureProtectedView.layer.removeFromSuperlayer()
+         }
+     }
+     
+diff --git a/submodules/TelegramUI/Sources/AppDelegate.swift b/submodules/TelegramUI/Sources/AppDelegate.swift
+index 021ff010e5..abcd04211c 100644
+--- a/submodules/TelegramUI/Sources/AppDelegate.swift
++++ b/submodules/TelegramUI/Sources/AppDelegate.swift
+@@ -240,6 +240,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+     private var isInForegroundValue = false
+     private let isActivePromise = ValuePromise<Bool>(false, ignoreRepeated: true)
+     private var isActiveValue = false
++    private var lastBackgroundEntryDate: Date?
++    private var pendingFocusModeCheck = true
+     let hasActiveAudioSession = Promise<Bool>(false)
+     
+     private let sharedContextPromise = Promise<SharedApplicationContext>()
+@@ -1990,6 +1992,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+     }
+ 
+     func applicationDidEnterBackground(_ application: UIApplication) {
++        self.lastBackgroundEntryDate = Date()
++
+         let _ = (self.sharedContextPromise.get()
+         |> take(1)
+         |> deliverOnMainQueue).start(next: { sharedApplicationContext in
+@@ -2049,8 +2053,10 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+             }
+         }
+         
++        self.pendingFocusModeCheck = true
++
+         self.runForegroundTasks()
+-        
++
+         SharedDisplayLinkDriver.shared.updateForegroundState(self.isActiveValue)
+     }
+     
+@@ -2084,8 +2090,24 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         self.isActiveValue = true
+         self.isActivePromise.set(true)
+ 
++        if self.pendingFocusModeCheck {
++            self.pendingFocusModeCheck = false
++            if SGSimpleSettings.shared.focusModeEnabled {
++                let shouldSkipFocusMode: Bool
++                if let backgroundDate = self.lastBackgroundEntryDate {
++                    shouldSkipFocusMode = Date().timeIntervalSince(backgroundDate) <= Double(SGSimpleSettings.shared.focusModeTimeout)
++                } else {
++                    shouldSkipFocusMode = false
++                }
++                self.lastBackgroundEntryDate = nil
++                if !shouldSkipFocusMode {
++                    self.activateFocusMode()
++                }
++            }
++        }
++
+         self.resetBadge()
+-        
++
+         self.maybeCheckForUpdates()
+         
+         SharedDisplayLinkDriver.shared.updateForegroundState(self.isActiveValue)
+@@ -2540,6 +2562,14 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
+         }
+     }
+     
++    private func activateFocusMode() {
++        let _ = (self.authorizedContext()
++        |> take(1)
++        |> deliverOnMainQueue).start(next: { context in
++            context.rootController.activateFocusModeSearch()
++        })
++    }
++
+     private func authorizedContext() -> Signal<AuthorizedApplicationContext, NoError> {
+         return self.context.get()
+         |> mapToSignal { context -> Signal<AuthorizedApplicationContext, NoError> in
+diff --git a/submodules/TelegramUI/Sources/ChatControllerNode.swift b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+index 89e89f1f05..d4c9a44afc 100644
+--- a/submodules/TelegramUI/Sources/ChatControllerNode.swift
++++ b/submodules/TelegramUI/Sources/ChatControllerNode.swift
+@@ -737,11 +737,8 @@ class ChatControllerNode: ASDisplayNode, ASScrollViewDelegate {
+                 break
+             }
+         }
+-        if let displayAdPeer {
+-            self.adMessagesContext = context.engine.messages.adMessages(peerId: displayAdPeer, activateManually: true)
+-        } else {
+-            self.adMessagesContext = nil
+-        }
++        let _ = displayAdPeer
++        self.adMessagesContext = nil
+ 
+         var getMessageTransitionNode: (() -> ChatMessageTransitionNodeImpl?)?
+         self.historyNode = ChatHistoryListNodeImpl(context: context, updatedPresentationData: controller?.updatedPresentationData ?? (context.sharedContext.currentPresentationData.with({ $0 }), context.sharedContext.presentationData), chatLocation: chatLocation, chatLocationContextHolder: chatLocationContextHolder, adMessagesContext: self.adMessagesContext, tag: tag.flatMap { .tag($0) }, source: source, subject: subject, controllerInteraction: controllerInteraction, selectedMessages: self.selectedMessagesPromise.get(), rotated: historyNodeRotated, isChatPreview: isChatPreview, messageTransitionNode: {
+diff --git a/submodules/TelegramUI/Sources/TelegramRootController.swift b/submodules/TelegramUI/Sources/TelegramRootController.swift
+index 3a268988a3..b5d8df6571 100644
+--- a/submodules/TelegramUI/Sources/TelegramRootController.swift
++++ b/submodules/TelegramUI/Sources/TelegramRootController.swift
+@@ -81,7 +81,8 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
+     public var callListController: CallListController?
+     public var chatListController: ChatListController?
+     public var accountSettingsController: PeerInfoScreen?
+-    
++    public var focusTabController: FocusTabController?
++
+     private var permissionsDisposable: Disposable?
+     private var presentationDataDisposable: Disposable?
+     private var presentationData: PresentationData
+@@ -210,7 +211,13 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
+         let callListController = CallListController(context: self.context, mode: .tab)
+         
+         var controllers: [ViewController] = []
+-        
++
++        // MARK: Swiftgram - Focus Tab
++        let focusTabController = FocusTabController(context: self.context)
++        if SGSimpleSettings.shared.focusModeEnabled {
++            controllers.append(focusTabController)
++        }
++
+         let contactsController = ContactsController(context: self.context)
+         contactsController.switchToChatsController = {  [weak self] in
+             self?.openChatsController(activateSearch: false)
+@@ -244,12 +251,21 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
+         accountSettingsController.parentController = self
+         controllers.append(accountSettingsController)
+                 
+-        tabBarController.setControllers(controllers, selectedIndex: restoreSettignsController != nil ? (controllers.count - 1) : (controllers.count - 2))
++        let defaultIndex: Int
++        if SGSimpleSettings.shared.focusModeEnabled {
++            defaultIndex = 0 // Focus tab is first
++        } else if restoreSettignsController != nil {
++            defaultIndex = controllers.count - 1
++        } else {
++            defaultIndex = controllers.count - 2
++        }
++        tabBarController.setControllers(controllers, selectedIndex: defaultIndex)
+         
+         self.contactsController = contactsController
+         self.callListController = callListController
+         self.chatListController = chatListController
+         self.accountSettingsController = accountSettingsController
++        self.focusTabController = focusTabController
+         self.rootTabController = tabBarController
+         self.pushViewController(tabBarController, animated: false)
+     }
+@@ -259,6 +275,9 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
+             return
+         }
+         var controllers: [ViewController] = []
++        if SGSimpleSettings.shared.focusModeEnabled, let focusTabController = self.focusTabController {
++            controllers.append(focusTabController)
++        }
+         if showContactsTab {
+             controllers.append(self.contactsController!)
+         }
+@@ -289,6 +308,18 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
+         }
+     }
+     
++    public func activateFocusModeSearch() {
++        guard let rootTabController = self.rootTabController else {
++            return
++        }
++
++        self.popToRoot(animated: false)
++
++        if let index = rootTabController.controllers.firstIndex(where: { $0 is FocusTabController }) {
++            rootTabController.selectedIndex = index
++        }
++    }
++
+     public func openRootCompose() {
+         self.chatListController?.activateCompose()
+     }
