@@ -599,8 +599,8 @@ public class GlassBackgroundView: UIView {
                 #endif
                 transition.setAlpha(view: foregroundView, alpha: isVisible ? 1.0 : 0.0)
             } else {
+                #if compiler(>=6.2)
                 if let nativeParamsView = self.nativeParamsView, let nativeView = self.nativeView {
-                    #if compiler(>=6.2)
                     if #available(iOS 26.0, *) {
                         var glassEffect: UIGlassEffect?
 
@@ -677,8 +677,8 @@ public class GlassBackgroundView: UIView {
                             nativeParamsView.lumaMax = 0.801
                         }
                     }
-                    #endif
                 }
+                    #endif
             }
         }
         
@@ -1346,7 +1346,7 @@ public final class GlassContextExtractableContainer: UIView, ContextExtractableC
                 tintColor: normalParams.tintColor,
                 isInteractive: normalParams.isInteractive,
                 isVisible: normalParams.isVisible,
-                transition: mappedTransition,
+                transition: mappedTransition
             )
         case let .extracted(size, cornerRadius, extractionState):
             switch extractionState {
