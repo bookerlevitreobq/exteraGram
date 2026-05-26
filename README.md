@@ -1,15 +1,88 @@
-# Swiftgram
+# exteraGram Enhanced
 
-Supercharged Telegram fork for iOS
+基于 exteraGram (Telegram iOS) 的增强定制版。集成 Swiftgram-Pro、Afon、SonicX 等主流分支特性，额外加入按浏览量排序、反撤销、幽灵模式、Premium 伪装等实用功能。
 
-[<img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" height="50">](https://apps.apple.com/app/apple-store/id6471879502?pt=126511626&ct=gh&mt=8)
+> ⚠️ **无有效 Apple 开发者签名**，需通过 LiveContainer / SideStore 侧载安装。构建使用假签名 (fake codesigning)，iCloud 和 Siri 已禁用以避免崩溃。
 
-- Download: [App Store](https://apps.apple.com/app/apple-store/id6471879502?pt=126511626&ct=gh&mt=8)
-- Telegram channel: https://t.me/swiftgram
-- Telegram chat: https://t.me/swiftgramchat
-- TestFlight beta, local chats, translations and other [@SwiftgramLinks](https://t.me/s/SwiftgramLinks)
+---
 
-Swiftgram's compilation steps are the same as for the official app. Below you'll find a complete compilation guide based on the official app.
+## 功能介绍
+
+| 功能 | 说明 |
+|------|------|
+| **反撤销 / 防撤回** | 对方撤回消息后仍可查看内容 |
+| **幽灵模式** | 已读消息但不发送已读回执 |
+| **Premium 伪装** | 本地解锁 Premium 专属表情、贴纸、上限 |
+| **赞助消息拦截** | 屏蔽公共频道底部广告 |
+| **专注模式** | 仅显示指定联系人通知，其余折叠 |
+| **禁止转发绕过** | 突破对方设置的禁止转发限制 |
+| **无限置顶** | 解除置顶消息数量限制 |
+| **匿名模式** | 群组中隐藏本人昵称和头像 |
+| **媒体持久化存储** | 任意媒体直接保存到系统相册 |
+| **屏幕录制保护绕过** | 私密聊天中截屏/录屏不触发警告 |
+| **上传加速** | TCP 拥塞控制优化，大文件上传提升约 30% |
+| **按浏览量排序** | 共享媒体按浏览量降序排列，带自动加载进度 |
+| **Swiftgram-Pro 解锁** | 硬编码解锁所有 Pro 付费功能 |
+
+完整功能说明见 [FEATURES.md](./FEATURES.md)。
+
+---
+
+## 构建 (GitHub Actions)
+
+推送 `merged-all` 分支自动触发 CI 构建：
+
+```yaml
+# .github/workflows/build.yml
+on:
+  push:
+    branches: [merged-all]
+  workflow_dispatch:
+```
+
+产物：`Telegram.ipa` + `Telegram.DSYMs.zip`，自动发布到 GitHub Releases。
+
+也可在 `bookerlevitreobq/exteraGram` 仓库手动触发 `workflow_dispatch`。
+
+---
+
+## 本地构建 (macOS + Xcode 26.4+)
+
+```bash
+# 导入假签名证书
+python3 build-system/Make/ImportCertificates.py \
+  --path build-system/fake-codesigning/certs
+
+# 编译
+python3 -u build-system/Make/Make.py \
+  --overrideXcodeVersion \
+  build \
+  --configurationPath="build-system/appstore-configuration.json" \
+  --codesigningInformationPath=build-system/fake-codesigning \
+  --configuration=release_arm64 \
+  --buildNumber=1
+```
+
+IPA 输出在 `bazel-bin/Telegram/*.ipa`。
+
+---
+
+## 分支说明
+
+| 分支 | 说明 |
+|------|------|
+| `merged-all`（默认） | 完整功能合并分支，用于 CI 构建 |
+| `clean-branch` | 清理历史后的分支，仅含本仓库专属提交 |
+
+---
+
+## 致谢
+
+- [exteraGram](https://github.com/exteraGram)
+- [Swiftgram](https://github.com/Swiftgram)
+- [Afon](https://github.com/gfgfgfgf-crypto/Afon)
+- [SonicX](https://github.com/SonicX)
+- [Telegram iOS](https://github.com/TelegramMessenger)
 
 # Telegram iOS Source Code Compilation Guide
 
