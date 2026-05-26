@@ -623,12 +623,14 @@ private func peerInfoAvailableMediaPanes(context: AccountContext, peerId: PeerId
         case present
     }
     let loadedOnce = Atomic<Bool>(value: false)
+    let maxTagWait: Double = 10.0
     return combineLatest(queue: .mainQueue(), tags.map { tagAndKey -> Signal<(PeerInfoPaneKey, PaneState), NoError> in
         let (tag, key, tagName) = tagAndKey
         let location = context.chatLocationInput(for: chatLocation, contextHolder: chatLocationContextHolder)
         let queryStartTime = CFAbsoluteTimeGetCurrent()
         Logger.shared.log("PeerInfoTabs", "  TAG \(tagName): starting query count=20")
-        return context.account.viewTracker.aroundMessageHistoryViewForLocation(location, index: .upperBound, anchorIndex: .upperBound, count: 20, clipHoles: false, fixedCombinedReadStates: nil, tag: .tag(tag))
+        
+        let baseSignal = context.account.viewTracker.aroundMessageHistoryViewForLocation(location, index: .upperBound, anchorIndex: .upperBound, count: 20, clipHoles: false, fixedCombinedReadStates: nil, tag: .tag(tag))
         |> map { (view, _, _) -> (PeerInfoPaneKey, PaneState) in
             let elapsed = CFAbsoluteTimeGetCurrent() - queryStartTime
             if view.entries.isEmpty {
@@ -642,6 +644,28 @@ private func peerInfoAvailableMediaPanes(context: AccountContext, peerId: PeerId
             } else {
                 Logger.shared.log("PeerInfoTabs", "  TAG \(tagName): PRESENT entries=\(view.entries.count) elapsed=\(String(format: "%.2f", elapsed))s")
                 return (key, .present)
+            }
+        }
+        
+        return Signal<(PeerInfoPaneKey, PaneState), NoError> { subscriber in
+            var hasResolved = false
+            let baseDisposable = baseSignal.start(next: { value in
+                let (_, state) = value
+                if state != .loading {
+                    hasResolved = true
+                }
+                subscriber.putNext(value)
+            })
+            let timer = DispatchWorkItem {
+                if !hasResolved {
+                    Logger.shared.log("PeerInfoTabs", "  TAG \(tagName): ⏱ TIMEOUT after \(maxTagWait)s — still loading, forcing EMPTY")
+                    subscriber.putNext((key, .empty))
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + maxTagWait, execute: timer)
+            return ActionDisposable {
+                baseDisposable.dispose()
+                timer.cancel()
             }
         }
     })

@@ -282,11 +282,14 @@ public final class Logger {
     }
     
     public func log(_ tag: String, _ what: @autoclosure () -> String) {
+        let string = what()
+#if !targetEnvironment(simulator)
+        NSLog("[%@] %@", tag, string)
+#endif
+        
         if !self.logToFile && !self.logToConsole {
             return
         }
-        
-        let string = what()
         
         var rawTime = time_t()
         time(&rawTime)
