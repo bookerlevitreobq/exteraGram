@@ -1900,12 +1900,23 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
                     return
                 }
 
+                let headerText: String?
+                if strongSelf.sorting == .views, totalCount > 0 {
+                    if totalCount > mappedItems.count {
+                        headerText = "正在按浏览量排序加载 (\(mappedItems.count)/\(totalCount))"
+                    } else {
+                        headerText = "已加载全部 (\(totalCount)项)"
+                    }
+                } else {
+                    headerText = nil
+                }
+
                 let items = SparseItemGrid.Items(
                     items: mappedSparseItems,
                     holeAnchors: mappedHoles,
                     count: totalCount,
                     itemBinding: strongSelf.itemGridBinding,
-                    headerText: nil,
+                    headerText: headerText,
                     snapTopInset: true
                 )
 
