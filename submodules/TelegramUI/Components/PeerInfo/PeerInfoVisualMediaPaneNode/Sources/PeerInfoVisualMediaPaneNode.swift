@@ -1193,6 +1193,8 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
     public private(set) var sorting: Sorting = .date
     private var zoomLevelRawValue: Int32 = 3
     private var lastAutoLoadCount: Int = 0
+    private var autoLoadStalledCount: Int = 0
+    private var forceAllLoaded: Bool = false
 
     private weak var currentGestureItem: SparseItemGridDisplayItem?
 
@@ -1780,6 +1782,8 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
         self.listSource = self.context.engine.messages.sparseMessageList(peerId: self.peerId, threadId: threadId, tag: tagMaskForType(self.contentType))
         self.isRequestingView = false
         self.lastAutoLoadCount = 0
+        self.autoLoadStalledCount = 0
+        self.forceAllLoaded = false
         self.requestHistoryAroundVisiblePosition(synchronous: true, reloadAtTop: true)
     }
 
@@ -1799,6 +1803,8 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
         let _ = updateVisualMediaStoredState(engine: self.context.engine, peerId: self.peerId, messageTag: self.stateTag, state: VisualMediaStoredState(zoomLevel: self.zoomLevelRawValue, sorting: sorting.rawValue)).start()
         self.isRequestingView = false
         self.lastAutoLoadCount = 0
+        self.autoLoadStalledCount = 0
+        self.forceAllLoaded = false
         self.requestHistoryAroundVisiblePosition(synchronous: true, reloadAtTop: true)
     }
 
@@ -1902,10 +1908,10 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
 
                 let headerText: String?
                 if strongSelf.sorting == .views, totalCount > 0 {
-                    if totalCount > mappedItems.count {
-                        headerText = "正在按浏览量排序加载 (\(mappedItems.count)/\(totalCount))"
+                    if strongSelf.forceAllLoaded || totalCount <= mappedItems.count {
+                        headerText = "已加载全部 (\(mappedItems.count)项)"
                     } else {
-                        headerText = "已加载全部 (\(totalCount)项)"
+                        headerText = "正在按浏览量排序加载 (\(mappedItems.count)/\(totalCount))"
                     }
                 } else {
                     headerText = nil
@@ -1935,15 +1941,21 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
                 strongSelf.updateHistory(items: items, synchronous: currentSynchronous, crossfade: crossfade)
                 strongSelf.isRequestingView = false
 
-                if strongSelf.sorting == .views, totalCount > mappedItems.count, let viewsBoundaryHole {
+                if strongSelf.sorting == .views, totalCount > mappedItems.count, let viewsBoundaryHole, !strongSelf.forceAllLoaded {
                     if mappedItems.count > strongSelf.lastAutoLoadCount {
                         strongSelf.lastAutoLoadCount = mappedItems.count
+                        strongSelf.autoLoadStalledCount = 0
                         let nextAnchor = VisualMediaHoleAnchor(
                             index: mappedItems.count,
                             messageId: viewsBoundaryHole.messageId,
                             localMonthTimestamp: viewsBoundaryHole.localMonthTimestamp
                         )
                         let _ = strongSelf.loadHole(anchor: nextAnchor, at: .toLower).start()
+                    } else {
+                        strongSelf.autoLoadStalledCount += 1
+                        if strongSelf.autoLoadStalledCount >= 3 {
+                            strongSelf.forceAllLoaded = true
+                        }
                     }
                 }
             }
