@@ -68,6 +68,9 @@ jobs:
 
       - name: Create Release and Upload
         run: |
+          gh release delete "build-${{ env.BUILD_NUMBER }}" --repo "${{ github.repository }}" --yes 2>/dev/null || true
+          git tag -d "build-${{ env.BUILD_NUMBER }}" 2>/dev/null || true
+          git push origin ":refs/tags/build-${{ env.BUILD_NUMBER }}" 2>/dev/null || true
           gh release create "build-${{ env.BUILD_NUMBER }}" \
             "/Users/Shared/telegram-ios/build/artifacts/Telegram.ipa" \
             "/Users/Shared/telegram-ios/build/artifacts/Telegram.DSYMs.zip" \
