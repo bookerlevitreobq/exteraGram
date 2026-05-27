@@ -675,5 +675,5 @@ public func sgUseShortAllChatsTitle(_ default: Bool) -> Bool {
 }
 
 public extension Notification.Name {
-    public static let SGMessageFilterKeywordsChanged = Notification.Name("SGMessageFilterKeywordsChanged")
+    static let SGMessageFilterKeywordsChanged = Notification.Name("SGMessageFilterKeywordsChanged")
 }
