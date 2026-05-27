@@ -1917,6 +1917,29 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
                     headerText = nil
                 }
 
+                if strongSelf.sorting == .views, totalCount > mappedItems.count, let viewsBoundaryHole, !strongSelf.forceAllLoaded {
+                    if mappedItems.count > strongSelf.lastAutoLoadCount {
+                        strongSelf.lastAutoLoadCount = mappedItems.count
+                        strongSelf.autoLoadStalledCount = 0
+                        let nextAnchor = VisualMediaHoleAnchor(
+                            index: mappedItems.count,
+                            messageId: viewsBoundaryHole.messageId,
+                            localMonthTimestamp: viewsBoundaryHole.localMonthTimestamp
+                        )
+                        let _ = strongSelf.loadHole(anchor: nextAnchor, at: .toLower).start()
+                    } else {
+                        strongSelf.autoLoadStalledCount += 1
+                        if strongSelf.autoLoadStalledCount >= 3 {
+                            strongSelf.forceAllLoaded = true
+                        }
+                    }
+                }
+
+                guard strongSelf.view.window != nil else {
+                    strongSelf.isRequestingView = false
+                    return
+                }
+
                 let items = SparseItemGrid.Items(
                     items: mappedSparseItems,
                     holeAnchors: mappedHoles,
@@ -1940,24 +1963,6 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
                 firstTime = false
                 strongSelf.updateHistory(items: items, synchronous: currentSynchronous, crossfade: crossfade)
                 strongSelf.isRequestingView = false
-
-                if strongSelf.sorting == .views, totalCount > mappedItems.count, let viewsBoundaryHole, !strongSelf.forceAllLoaded {
-                    if mappedItems.count > strongSelf.lastAutoLoadCount {
-                        strongSelf.lastAutoLoadCount = mappedItems.count
-                        strongSelf.autoLoadStalledCount = 0
-                        let nextAnchor = VisualMediaHoleAnchor(
-                            index: mappedItems.count,
-                            messageId: viewsBoundaryHole.messageId,
-                            localMonthTimestamp: viewsBoundaryHole.localMonthTimestamp
-                        )
-                        let _ = strongSelf.loadHole(anchor: nextAnchor, at: .toLower).start()
-                    } else {
-                        strongSelf.autoLoadStalledCount += 1
-                        if strongSelf.autoLoadStalledCount >= 3 {
-                            strongSelf.forceAllLoaded = true
-                        }
-                    }
-                }
             }
         }))
     }
