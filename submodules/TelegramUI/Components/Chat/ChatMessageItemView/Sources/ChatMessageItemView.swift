@@ -663,12 +663,10 @@ open class ChatMessageItemView: ListViewItemNode, ChatMessageItemNodeProtocol {
     open var awaitingAppliedReaction: (MessageReaction.Reaction?, () -> Void)?
     
     private var fetchEffectDisposable: Disposable?
+    private var messageFilterObserver: NSObjectProtocol?
     
     public var playedEffectAnimation: Bool = false
     public var effectAnimationNodes: [ChatMessageTransitionNode.DecorationItemNode] = []
-    
-    private var wasFilteredKeywordTested: Bool = false
-    private var matchedFilterKeyword: String? = nil
     
     public required init(rotated: Bool) {
         super.init(layerBacked: false, rotated: rotated)
@@ -683,6 +681,9 @@ open class ChatMessageItemView: ListViewItemNode, ChatMessageItemNodeProtocol {
     
     deinit {
         self.fetchEffectDisposable?.dispose()
+        if let observer = self.messageFilterObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
     
     override open func reuse() {
@@ -690,23 +691,36 @@ open class ChatMessageItemView: ListViewItemNode, ChatMessageItemNodeProtocol {
         
         self.item = nil
         self.frame = CGRect()
-        self.wasFilteredKeywordTested = false
-        self.matchedFilterKeyword = nil
+        if let observer = self.messageFilterObserver {
+            NotificationCenter.default.removeObserver(observer)
+            self.messageFilterObserver = nil
+        }
+    }
+    
+    private func applyMessageFilter(_ item: ChatMessageItem) {
+        if !SGSimpleSettings.shared.messageFilterKeywords.isEmpty && SGSimpleSettings.shared.ephemeralStatus > 1 {
+            let incomingMessage = item.message.effectivelyIncoming(item.context.account.peerId)
+            if incomingMessage, let _ = SGSimpleSettings.shared.messageFilterKeywords.first(where: { item.message.text.contains($0) }) {
+                self.alpha = item.presentationData.theme.theme.overallDarkAppearance ? 0.2 : 0.3
+                return
+            }
+        }
+        self.alpha = 1.0
     }
     
     open func setupItem(_ item: ChatMessageItem, synchronousLoad: Bool) {
         self.item = item
-        
-        if !self.wasFilteredKeywordTested && !SGSimpleSettings.shared.messageFilterKeywords.isEmpty && SGSimpleSettings.shared.ephemeralStatus > 1 {
-            let incomingMessage = item.message.effectivelyIncoming(item.context.account.peerId)
-            if incomingMessage {
-                if let matchedKeyword = SGSimpleSettings.shared.messageFilterKeywords.first(where: { item.message.text.contains($0) }) {
-                     self.matchedFilterKeyword = matchedKeyword
-                     self.alpha = item.presentationData.theme.theme.overallDarkAppearance ? 0.2 : 0.3
-                }
+        self.applyMessageFilter(item)
+        if self.messageFilterObserver == nil {
+            self.messageFilterObserver = NotificationCenter.default.addObserver(
+                forName: .SGMessageFilterKeywordsChanged,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self, let item = self.item else { return }
+                self.applyMessageFilter(item)
             }
         }
-        self.wasFilteredKeywordTested = true
     }
     
     open func updateAccessibilityData(_ accessibilityData: ChatMessageAccessibilityData) {
@@ -715,6 +729,7 @@ open class ChatMessageItemView: ListViewItemNode, ChatMessageItemNodeProtocol {
     
     override open func layoutForParams(_ params: ListViewItemLayoutParams, item: ListViewItem, previousItem: ListViewItem?, nextItem: ListViewItem?) {
         if let item = item as? ChatMessageItem {
+            self.applyMessageFilter(item)
             let doLayout = self.asyncLayout()
             let merged = item.mergedWithItems(top: previousItem, bottom: nextItem, isRotated: item.controllerInteraction.chatIsRotated)
             let (layout, apply) = doLayout(item, params, merged.top, merged.bottom, merged.dateAtBottom)

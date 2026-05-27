@@ -63,6 +63,7 @@ struct MessageFilterView: View {
     @State private var keywords: [String] {
         didSet {
             SGSimpleSettings.shared.messageFilterKeywords = keywords
+            NotificationCenter.default.post(name: .SGMessageFilterKeywordsChanged, object: nil)
         }
     }
     

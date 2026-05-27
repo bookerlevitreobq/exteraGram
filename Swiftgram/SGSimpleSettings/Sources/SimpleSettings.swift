@@ -673,3 +673,7 @@ public func sgUseShortAllChatsTitle(_ default: Bool) -> Bool {
             return `default`
     }
 }
+
+public extension Notification.Name {
+    public static let SGMessageFilterKeywordsChanged = Notification.Name("SGMessageFilterKeywordsChanged")
+}

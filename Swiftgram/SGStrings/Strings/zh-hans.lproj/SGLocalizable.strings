@@ -247,3 +247,41 @@
 "PayWall.ValidationError" = "验证错误";
 "PayWall.ValidationError.TryAgain" = "购买验证过程中出现问题。不用担心！稍后再试恢复购买。";
 "PayWall.ValidationError.Expired" = "您的订阅已过期。再次订阅以重新获得专业版功能。";
+
+"Settings.FocusMode.Header" = "专注模式";
+"Settings.FocusMode" = "专注模式";
+"Settings.FocusMode.Timeout" = "超时时间";
+
+"Settings.Tabs.SearchButton" = "搜索按钮";
+"Settings.Tabs.WideTabBar" = "宽标签栏";
+"Settings.Tabs.WideTabBar.Notice" = "当部分标签隐藏时，保持标签栏的完整宽度。";
+
+"Settings.CompactMessagePreview" = "紧凑消息预览";
+
+"Settings.Translation.Backend" = "翻译服务";
+/* Do not translate */
+"Settings.Translation.Backend.default" = "Telegram";
+/* Do not translate */
+"Settings.Translation.Backend.gtranslate" = "GTranslate";
+"Settings.Translation.Backend.system" = "系统翻译";
+"Settings.Translation.Backend.Notice" = "如果所选翻译服务不可用，Swiftgram 将回退到 %@。";
+
+"Settings.Transcription.Header" = "语音转文字";
+"Settings.Transcription.Backend" = "转录服务";
+/* Do not translate */
+"Settings.Transcription.Backend.default" = "Telegram";
+/* Do not translate */
+"Settings.Transcription.Backend.apple" = "Apple";
+"Settings.Transcription.Backend.Notice" = "如果所选转录服务不可用，Swiftgram 将回退到 %@。";
+
+"Common.KnowWhatYouDo" = "请仅在了解其作用的情况下更改这些设置。";
+
+"AppBadge.Title" = "应用角标";
+"AppBadge.Notice" = "自定义截图上显示的应用角标";
+
+"Settings.NY.Header" = "节日特效";
+"Settings.NY.Style" = "样式";
+"Settings.NY.Style.default" = "已禁用";
+"Settings.NY.Style.snow" = "下雪";
+"Settings.NY.Style.lightning" = "闪电";
+"Settings.NY.Notice" = "仅在限定时间内可用！";
