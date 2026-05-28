@@ -1935,11 +1935,6 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
                     }
                 }
 
-                guard strongSelf.view.window != nil else {
-                    strongSelf.isRequestingView = false
-                    return
-                }
-
                 let items = SparseItemGrid.Items(
                     items: mappedSparseItems,
                     holeAnchors: mappedHoles,
