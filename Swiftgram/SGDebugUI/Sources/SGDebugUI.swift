@@ -41,6 +41,7 @@ private enum SGDebugActions: String {
     case restorePurchases
     case setIAP
     case resetIAP
+    case copyViewSortLogs
 }
 
 private enum SGDebugToggles: String {
@@ -77,6 +78,7 @@ private func SGDebugControllerEntries(presentationData: PresentationData) -> [SG
     entries.append(.action(id: id.count, section: .base, actionType: .resetIAP, text: "Reset Pro", kind: .destructive))
 
     entries.append(.toggle(id: id.count, section: .notifications, settingName: .legacyNotificationsFix, value: SGSimpleSettings.shared.legacyNotificationsFix, text: "[OLD] Fix empty notifications", enabled: true))
+    entries.append(.action(id: id.count, section: .notifications, actionType: .copyViewSortLogs, text: "Copy View Sort Logs (\(SGViewSortLogger.shared.count) entries)", kind: .generic))
     return entries
 }
 private func okUndoController(_ text: String, _ presentationData: PresentationData) -> UndoOverlayController {
@@ -193,6 +195,16 @@ public func sgDebugController(context: AccountContext) -> ViewController {
                 ),
                 nil)
             })
+        case .copyViewSortLogs:
+            let logs = SGViewSortLogger.shared.copyToClipboard()
+            UIPasteboard.general.string = logs
+            presentControllerImpl?(UndoOverlayController(
+                presentationData: presentationData,
+                content: .info(title: nil, text: "View Sort Logs (\(SGViewSortLogger.shared.count) entries) copied to clipboard", timeout: nil, customUndoText: nil),
+                elevatedLayout: false,
+                action: { _ in return false }
+            ),
+            nil)
         }
     })
     

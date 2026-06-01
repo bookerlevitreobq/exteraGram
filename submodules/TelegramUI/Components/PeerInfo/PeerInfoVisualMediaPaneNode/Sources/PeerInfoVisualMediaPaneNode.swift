@@ -30,6 +30,7 @@ import MediaPickerUI
 import ChatControllerInteraction
 import UIKitRuntimeUtils
 import PeerInfoPaneNode
+import SGSimpleSettings
 
 private final class FrameSequenceThumbnailNode: ASDisplayNode {
     private let context: AccountContext
@@ -1755,9 +1756,11 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
         case .toUpper:
             mappedDirection = .earlier
         }
+        SGViewSortLogger.shared.log("loadHole called: anchorMessageId=\(anchor.messageId) direction=\(mappedDirection) sorting=\(self.sorting) contentType=\(self.contentType)")
         let listSource = self.listSource
         return Signal { subscriber in
             listSource.loadHole(anchor: anchor.messageId, direction: mappedDirection, completion: {
+                SGViewSortLogger.shared.log("loadHole completed: anchorMessageId=\(anchor.messageId) direction=\(mappedDirection)")
                 subscriber.putCompletion()
             })
 
@@ -1798,6 +1801,7 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
         if self.sorting == sorting {
             return
         }
+        SGViewSortLogger.shared.log("updateSorting: \(self.sorting)->\(sorting) resetting autoLoadState")
         self.sorting = sorting
 
         let _ = updateVisualMediaStoredState(engine: self.context.engine, peerId: self.peerId, messageTag: self.stateTag, state: VisualMediaStoredState(zoomLevel: self.zoomLevelRawValue, sorting: sorting.rawValue)).start()
@@ -1806,9 +1810,6 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
         self.autoLoadStalledCount = 0
         self.forceAllLoaded = false
         self.requestHistoryAroundVisiblePosition(synchronous: true, reloadAtTop: true)
-    }
-
-    public func ensureMessageIsVisible(id: MessageId) {
     }
 
     private func messageViewCount(_ message: Message) -> Int? {
@@ -1864,6 +1865,9 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
             let timezoneOffset = Int32(TimeZone.current.secondsFromGMT())
             let sorting = self?.sorting ?? .date
 
+            let logTag = "ViewsLoad[\(UnsafeMutableRawPointer(Unmanaged.passUnretained(self!).toOpaque()))]"
+            SGViewSortLogger.shared.log("\(logTag) STATE EMIT: items.count=\(list.items.count) isLoading=\(list.isLoading) totalCount=\(list.totalCount) sorting=\(sorting) forceAllLoaded=\(self?.forceAllLoaded ?? false) lastAutoLoad=\(self?.lastAutoLoadCount ?? -1) stallCount=\(self?.autoLoadStalledCount ?? -1)")
+
             var mappedItems: [VisualMediaItem] = []
             var mappedHoles: [SparseItemGrid.HoleAnchor] = []
             var totalCount = list.totalCount
@@ -1906,19 +1910,27 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
                     return
                 }
 
+                SGViewSortLogger.shared.log("\(logTag) PROCESSED: mappedItems=\(mappedItems.count) totalCount=\(totalCount) hasHole=\(viewsBoundaryHole != nil) forceAll=\(strongSelf.forceAllLoaded)")
+
                 let headerText: String?
                 if strongSelf.sorting == .views, totalCount > 0 {
                     if strongSelf.forceAllLoaded || totalCount <= mappedItems.count {
                         headerText = "已加载全部 (\(mappedItems.count)项)"
+                        SGViewSortLogger.shared.log("\(logTag) HEADER: 已加载全部 (\(mappedItems.count)项) reason=\(strongSelf.forceAllLoaded ? "forceAllLoaded" : "totalCount(\(totalCount)) <= mappedItems(\(mappedItems.count))")")
                     } else {
                         headerText = "正在按浏览量排序加载 (\(mappedItems.count)/\(totalCount))"
+                        SGViewSortLogger.shared.log("\(logTag) HEADER: 加载中 (\(mappedItems.count)/\(totalCount))")
                     }
                 } else {
                     headerText = nil
+                    if strongSelf.sorting == .views {
+                        SGViewSortLogger.shared.log("\(logTag) HEADER: nil (no items or sorting=views but totalCount=\(totalCount))")
+                    }
                 }
 
                 if strongSelf.sorting == .views, totalCount > mappedItems.count, let viewsBoundaryHole, !strongSelf.forceAllLoaded {
                     if mappedItems.count > strongSelf.lastAutoLoadCount {
+                        SGViewSortLogger.shared.log("\(logTag) AUTOLOAD: PROGRESS mappedItems(\(mappedItems.count)) > lastAutoLoad(\(strongSelf.lastAutoLoadCount)) → loading older items via .toUpper")
                         strongSelf.lastAutoLoadCount = mappedItems.count
                         strongSelf.autoLoadStalledCount = 0
                         let nextAnchor = VisualMediaHoleAnchor(
@@ -1926,12 +1938,18 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
                             messageId: viewsBoundaryHole.messageId,
                             localMonthTimestamp: viewsBoundaryHole.localMonthTimestamp
                         )
-                        let _ = strongSelf.loadHole(anchor: nextAnchor, at: .toLower).start()
+                        let _ = strongSelf.loadHole(anchor: nextAnchor, at: .toUpper).start()
                     } else {
                         strongSelf.autoLoadStalledCount += 1
-                        if strongSelf.autoLoadStalledCount >= 3 {
+                        SGViewSortLogger.shared.log("\(logTag) AUTOLOAD: STALL #\(strongSelf.autoLoadStalledCount) mappedItems(\(mappedItems.count)) <= lastAutoLoad(\(strongSelf.lastAutoLoadCount))")
+                        if strongSelf.autoLoadStalledCount >= 10 {
                             strongSelf.forceAllLoaded = true
+                            SGViewSortLogger.shared.log("\(logTag) AUTOLOAD: FORCE ALL LOADED after 10 stalls (mappedItems=\(mappedItems.count) totalCount=\(totalCount))")
                         }
+                    }
+                } else {
+                    if strongSelf.sorting == .views {
+                        SGViewSortLogger.shared.log("\(logTag) AUTOLOAD: SKIP totalCount(\(totalCount)) <= mappedItems(\(mappedItems.count)) OR noHole OR forceAllLoaded(\(strongSelf.forceAllLoaded))")
                     }
                 }
 
