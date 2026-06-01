@@ -1812,6 +1812,9 @@ public final class PeerInfoVisualMediaPaneNode: ASDisplayNode, PeerInfoPaneNode,
         self.requestHistoryAroundVisiblePosition(synchronous: true, reloadAtTop: true)
     }
 
+    public func ensureMessageIsVisible(id: MessageId) {
+    }
+
     private func messageViewCount(_ message: Message) -> Int? {
         for attribute in message.attributes {
             if let attribute = attribute as? ViewCountMessageAttribute {
