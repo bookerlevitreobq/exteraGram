@@ -18,6 +18,7 @@ import TelegramUIPreferences
 import ItemListUI
 import PresentationDataUtils
 import OverlayStatusController
+import UndoUI
 import AccountContext
 import AppBundle
 import WebKit
@@ -130,6 +131,7 @@ private enum SGSliderSetting: String {
 private enum SGDisclosureLink: String {
     case contentSettings
     case languageSettings
+    case copyViewSortLogs
 }
 
 private struct PeerNameColorScreenState: Equatable {
@@ -347,6 +349,9 @@ private func SGControllerEntries(presentationData: PresentationData, callListSet
     entries.append(.notice(id: id.count, section: .other, text: i18n("Settings.DefaultEmojisFirst.Notice", lang)))
     entries.append(.toggle(id: id.count, section: .other, settingName: .hidePhoneInSettings, value: SGSimpleSettings.shared.hidePhoneInSettings, text: i18n("Settings.HidePhoneInSettingsUI", lang), enabled: true))
     entries.append(.notice(id: id.count, section: .other, text: i18n("Settings.HidePhoneInSettingsUI.Notice", lang)))
+    
+    entries.append(.header(id: id.count, section: .other, text: "调试", badge: nil))
+    entries.append(.disclosure(id: id.count, section: .other, link: .copyViewSortLogs, text: "Copy View Sort Logs (\(SGViewSortLogger.shared.count) 条)"))
     
     return filterSGItemListUIEntrires(entries: entries, by: state.searchQuery)
 }
@@ -732,6 +737,15 @@ public func sgSettingsController(context: AccountContext/*, focusOnItemTag: Int?
                     }
                     strongContext.sharedContext.applicationBindings.openUrl(url)
                 })
+            case .copyViewSortLogs:
+                let logs = SGViewSortLogger.shared.copyToClipboard()
+                UIPasteboard.general.string = logs
+                presentControllerImpl?(UndoOverlayController(
+                    presentationData: context.sharedContext.currentPresentationData.with { $0 },
+                    content: .info(title: nil, text: "View Sort Logs (\(SGViewSortLogger.shared.count) 条) 已复制到剪贴板", timeout: nil, customUndoText: nil),
+                    elevatedLayout: false,
+                    action: { _ in return false }
+                ), nil)
         }
     }, searchInput: { searchQuery in
         updateState { state in
